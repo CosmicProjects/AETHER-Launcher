@@ -222,6 +222,7 @@ export class UIManager {
     async init() {
         await this.preferencesReady;
         await this.loadPublicLibrary();
+        await this.syncLocalLibraryToPublicCatalog();
         this.switchView(this.currentView);
         this.bindEvents();
         this.updateHeaderEnv();
@@ -303,6 +304,60 @@ export class UIManager {
 
     canSyncPublicLibrary() {
         return Boolean(this.getPublicLibrarySyncTarget());
+    }
+
+    async syncLocalLibraryToPublicCatalog() {
+        if (!env.status.isLocal || !this.canSyncPublicLibrary()) {
+            return { synced: 0, skipped: 0 };
+        }
+
+        try {
+            const localGames = await storage.getAllGames();
+            if (!Array.isArray(localGames) || localGames.length === 0) {
+                return { synced: 0, skipped: 0 };
+            }
+
+            const publicGamesById = new Map((this.publicGames || []).map(game => [game?.id, game]));
+            let synced = 0;
+            let skipped = 0;
+
+            for (const game of localGames) {
+                if (!game?.id || game.isPublic === false) {
+                    skipped++;
+                    continue;
+                }
+
+                const publicGame = publicGamesById.get(game.id);
+                const localVersion = Number(game.publicUpdatedAt || game.lastUpdatedAt || game.addedAt || 0);
+                const publicVersion = Number(publicGame?.publicUpdatedAt || publicGame?.lastUpdatedAt || 0);
+                const needsSync = !publicGame
+                    || !game.publicPublishedAt
+                    || !game.publicUpdatedAt
+                    || localVersion > publicVersion;
+
+                if (!needsSync) {
+                    skipped++;
+                    continue;
+                }
+
+                const published = await this.publishGameToPublicLibrary(game);
+                if (published) {
+                    synced++;
+                    continue;
+                }
+
+                skipped++;
+            }
+
+            if (synced > 0) {
+                await this.loadPublicLibrary({ force: true });
+            }
+
+            return { synced, skipped };
+        } catch (err) {
+            console.warn('Unable to sync local library to the public catalog:', err);
+            return { synced: 0, skipped: 0 };
+        }
     }
 
 
