@@ -3,7 +3,6 @@
  * Intercepts requests for games and serves files directly from IndexedDB.
  */
 
-const DB_NAME = 'AetherLauncherDB';
 const DB_VERSION = 1;
 const SAFE_MODE_STORAGE_KEY = 'safeModeEnabled';
 
@@ -92,18 +91,19 @@ async function handleVirtualRequest(request, url) {
     const markerIndex = url.pathname.indexOf(marker);
     const virtualPath = url.pathname.substring(markerIndex + marker.length);
     
-    // virtualPath format: [gameId]/[file/path/here]
-    const firstSlashIndex = virtualPath.indexOf('/');
-    if (firstSlashIndex === -1) {
+    // virtualPath format: [dbName]/[gameId]/[file/path/here]
+    const parts = virtualPath.split('/');
+    if (parts.length < 3) {
         return new Response('Invalid Virtual Path', { status: 400 });
     }
 
-    const gameId = virtualPath.substring(0, firstSlashIndex);
-    const filePath = decodeURIComponent(virtualPath.substring(firstSlashIndex + 1));
+    const dbName = decodeURIComponent(parts[0]);
+    const gameId = parts[1];
+    const filePath = decodeURIComponent(parts.slice(2).join('/'));
     const safeModeRequested = url.searchParams.get('aetherSafeMode') === '1';
 
     return new Promise((resolve) => {
-        const dbRequest = indexedDB.open(DB_NAME, DB_VERSION);
+        const dbRequest = indexedDB.open(dbName, DB_VERSION);
         
         dbRequest.onsuccess = (event) => {
             const db = event.target.result;

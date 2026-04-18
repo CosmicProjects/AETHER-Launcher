@@ -436,7 +436,7 @@ export class GameEngine {
         }
         
         // Return a relative path to be intercepted by the Service Worker
-        return `./virtual-game/${game.id}/${game.entryPoint}`;
+        return `./virtual-game/${encodeURIComponent(storage.dbName)}/${game.id}/${game.entryPoint}`;
     }
 }
 

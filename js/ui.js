@@ -2632,7 +2632,7 @@ export class UIManager {
                 </div>
             </div>
             <div class="flex-1 bg-black relative">
-                <iframe src="about:blank" class="w-full h-full border-none" sandbox="allow-scripts allow-forms allow-pointer-lock allow-same-origin"></iframe>
+                <iframe src="about:blank" class="w-full h-full border-none" sandbox="allow-scripts allow-forms allow-pointer-lock"></iframe>
                 <div class="loader game-window-loader absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div class="w-12 h-12 border-4 border-brand-primary/20 border-t-brand-primary rounded-full animate-spin"></div>
                 </div>
