@@ -72,6 +72,21 @@ const MIME_TYPES = {
     '.wasm': 'application/wasm'
 };
 
+const PUBLIC_LIBRARY_CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Max-Age': '86400'
+};
+
+function sendJsonResponse(res, statusCode, payload) {
+    res.writeHead(statusCode, {
+        'Content-Type': 'application/json',
+        ...PUBLIC_LIBRARY_CORS_HEADERS
+    });
+    res.end(JSON.stringify(payload));
+}
+
 /**
  * Recursively reads a directory and returns a map of file paths to Buffers
  */
@@ -277,15 +292,19 @@ const server = http.createServer((req, res) => {
     if (req.url.startsWith('/api/public-library')) {
         const urlParams = new URL(req.url, `http://${req.headers.host}`);
 
+        if (req.method === 'OPTIONS') {
+            res.writeHead(204, PUBLIC_LIBRARY_CORS_HEADERS);
+            res.end();
+            return;
+        }
+
         if (req.method === 'GET') {
             (async () => {
                 try {
                     const library = await readPublicLibrary();
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ success: true, games: library.games || [] }));
+                    sendJsonResponse(res, 200, { success: true, games: library.games || [] });
                 } catch (err) {
-                    res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ success: false, error: err.message }));
+                    sendJsonResponse(res, 500, { success: false, error: err.message });
                 }
             })();
             return;
@@ -303,23 +322,19 @@ const server = http.createServer((req, res) => {
                         for (const game of games) {
                             saved.push(await upsertPublicGame(game));
                         }
-                        res.writeHead(200, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ success: true, games: saved }));
+                        sendJsonResponse(res, 200, { success: true, games: saved });
                         return;
                     }
 
                     if (!payload || !payload.id) {
-                        res.writeHead(400, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ success: false, error: 'Missing game payload or id' }));
+                        sendJsonResponse(res, 400, { success: false, error: 'Missing game payload or id' });
                         return;
                     }
 
                     const saved = await upsertPublicGame(payload);
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ success: true, game: saved }));
+                    sendJsonResponse(res, 200, { success: true, game: saved });
                 } catch (err) {
-                    res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ success: false, error: err.message }));
+                    sendJsonResponse(res, 500, { success: false, error: err.message });
                 }
             })();
             return;
@@ -328,26 +343,22 @@ const server = http.createServer((req, res) => {
         if (req.method === 'DELETE') {
             const gameId = urlParams.searchParams.get('id');
             if (!gameId) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: false, error: 'Missing game id' }));
+                sendJsonResponse(res, 400, { success: false, error: 'Missing game id' });
                 return;
             }
 
             (async () => {
                 try {
                     const removed = await removePublicGame(gameId);
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ success: removed, removed }));
+                    sendJsonResponse(res, 200, { success: removed, removed });
                 } catch (err) {
-                    res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ success: false, error: err.message }));
+                    sendJsonResponse(res, 500, { success: false, error: err.message });
                 }
             })();
             return;
         }
 
-        res.writeHead(405, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: 'Method not allowed' }));
+        sendJsonResponse(res, 405, { success: false, error: 'Method not allowed' });
         return;
     }
 

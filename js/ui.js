@@ -9,7 +9,9 @@ import { env } from './envDetector.js';
 import { generateTitleArtwork } from './artwork.js';
 import {
     getAetherConfig,
-    readPublicLibraryApiUrl
+    getSupabasePublicLibraryConfig,
+    readPublicLibraryApiUrl,
+    readPublicLibraryReadUrl
 } from './runtimeConfig.js';
 
 const DEFAULT_THEME_ID = 'unicorn';
@@ -279,8 +281,28 @@ export class UIManager {
         return api;
     }
 
+    getPublicLibraryReadUrl() {
+        const config = getAetherConfig();
+        const readUrl = readPublicLibraryReadUrl(config);
+        return readUrl || './data/public-library.json';
+    }
+
+    getPublicLibrarySyncTarget() {
+        const apiUrl = this.getPublicLibraryApiUrl();
+        if (apiUrl) {
+            return { kind: 'api', apiUrl };
+        }
+
+        const supabaseConfig = this.getPublicLibrarySupabaseConfig();
+        if (supabaseConfig.configured) {
+            return { kind: 'supabase', ...supabaseConfig };
+        }
+
+        return null;
+    }
+
     canSyncPublicLibrary() {
-        return Boolean(this.getPublicLibraryApiUrl());
+        return Boolean(this.getPublicLibrarySyncTarget());
     }
 
 
@@ -760,7 +782,7 @@ export class UIManager {
     }
 
     getPublicLibrarySupabaseConfig() {
-        return getSupabasePublicLibraryConfig();
+        return getSupabasePublicLibraryConfig(getAetherConfig());
     }
 
     async loadPublicLibraryFromSupabase() {
@@ -916,20 +938,47 @@ export class UIManager {
         }
 
         this.publicLibraryReady = (async () => {
-
-
             const apiUrl = this.getPublicLibraryApiUrl();
-            const sources = apiUrl
-                ? [
-                    { url: apiUrl, kind: 'api' },
-                    { url: './data/public-library.json', kind: 'file' }
-                ]
-                : [
-                    { url: './data/public-library.json', kind: 'file' }
-                ];
+            const supabaseConfig = this.getPublicLibrarySupabaseConfig();
+            const readUrl = this.getPublicLibraryReadUrl();
+            const sources = [];
+
+            if (apiUrl) {
+                sources.push({ url: apiUrl, kind: 'api' });
+            }
+
+            if (supabaseConfig.configured) {
+                sources.push({ kind: 'supabase' });
+            }
+
+            if (readUrl) {
+                sources.push({ url: readUrl, kind: 'file' });
+            }
+
+            if (!sources.some(source => source.kind === 'file' && source.url === './data/public-library.json')) {
+                sources.push({ url: './data/public-library.json', kind: 'file' });
+            }
 
             for (const source of sources) {
                 try {
+                    if (source.kind === 'supabase') {
+                        const supabaseGames = await this.loadPublicLibraryFromSupabase();
+                        if (supabaseGames === null) {
+                            continue;
+                        }
+
+                        const hydratedGames = [];
+                        for (const rawGame of supabaseGames || []) {
+                            const hydrated = await this.hydratePublicGame(rawGame);
+                            if (hydrated) {
+                                hydratedGames.push(hydrated);
+                            }
+                        }
+
+                        this.publicLibrarySource = source.kind;
+                        return this.setPublicGames(hydratedGames);
+                    }
+
                     const response = await fetch(source.url, { cache: 'no-store' });
                     if (!response.ok) {
                         continue;
@@ -1023,8 +1072,8 @@ export class UIManager {
             return false;
         }
 
-        const apiUrl = this.getPublicLibraryApiUrl();
-        if (!apiUrl) {
+        const syncTarget = this.getPublicLibrarySyncTarget();
+        if (!syncTarget) {
             return false;
         }
 
@@ -1032,18 +1081,51 @@ export class UIManager {
             const payload = await this.serializeGameForPublic(game);
             if (!payload) return false;
 
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ game: payload })
-            });
-            const data = await response.json().catch(() => null);
+            let publishedGame = null;
 
-            if (!response.ok || !data?.success) {
-                throw new Error(data?.error || `HTTP ${response.status}`);
+            if (syncTarget.kind === 'api') {
+                const response = await fetch(syncTarget.apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ game: payload })
+                });
+                const data = await response.json().catch(() => null);
+
+                if (!response.ok || !data?.success) {
+                    throw new Error(data?.error || `HTTP ${response.status}`);
+                }
+
+                publishedGame = await this.hydratePublicGame(data.game || payload);
+            } else if (syncTarget.kind === 'supabase') {
+                const response = await fetch(
+                    `${syncTarget.supabaseUrl}/rest/v1/${encodeURIComponent(syncTarget.supabaseTable)}?on_conflict=id`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            apikey: syncTarget.supabaseAnonKey,
+                            Authorization: `Bearer ${syncTarget.supabaseAnonKey}`,
+                            'Content-Type': 'application/json',
+                            Prefer: 'resolution=merge-duplicates,return=representation'
+                        },
+                        body: JSON.stringify([{
+                            id: payload.id,
+                            payload,
+                            public_published_at: payload.publicPublishedAt || Date.now(),
+                            public_updated_at: payload.publicUpdatedAt || Date.now()
+                        }])
+                    }
+                );
+
+                if (!response.ok) {
+                    const errorText = await response.text().catch(() => '');
+                    throw new Error(errorText || `HTTP ${response.status}`);
+                }
+
+                const rows = await response.json().catch(() => []);
+                const rowPayload = rows?.[0]?.payload || payload;
+                publishedGame = await this.hydratePublicGame(rowPayload);
             }
 
-            const publishedGame = await this.hydratePublicGame(data.game || payload);
             if (publishedGame) {
                 this.upsertPublicGameInCache(publishedGame);
                 try {
@@ -1070,19 +1152,38 @@ export class UIManager {
     async removeGameFromPublicLibrary(gameId) {
         if (!gameId) return false;
 
-        const apiUrl = this.getPublicLibraryApiUrl();
-        if (!apiUrl) {
+        const syncTarget = this.getPublicLibrarySyncTarget();
+        if (!syncTarget) {
             return false;
         }
 
         try {
-            const response = await fetch(`${apiUrl}?id=${encodeURIComponent(gameId)}`, {
-                method: 'DELETE'
-            });
-            const data = await response.json().catch(() => null);
+            if (syncTarget.kind === 'api') {
+                const response = await fetch(`${syncTarget.apiUrl}?id=${encodeURIComponent(gameId)}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json().catch(() => null);
 
-            if (!response.ok || !data?.success) {
-                throw new Error(data?.error || `HTTP ${response.status}`);
+                if (!response.ok || !data?.success) {
+                    throw new Error(data?.error || `HTTP ${response.status}`);
+                }
+            } else if (syncTarget.kind === 'supabase') {
+                const response = await fetch(
+                    `${syncTarget.supabaseUrl}/rest/v1/${encodeURIComponent(syncTarget.supabaseTable)}?id=eq.${encodeURIComponent(gameId)}`,
+                    {
+                        method: 'DELETE',
+                        headers: {
+                            apikey: syncTarget.supabaseAnonKey,
+                            Authorization: `Bearer ${syncTarget.supabaseAnonKey}`,
+                            Prefer: 'return=minimal'
+                        }
+                    }
+                );
+
+                if (!response.ok) {
+                    const errorText = await response.text().catch(() => '');
+                    throw new Error(errorText || `HTTP ${response.status}`);
+                }
             }
 
             this.removePublicGameFromCache(gameId);
