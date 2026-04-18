@@ -269,7 +269,14 @@ export class UIManager {
 
     getPublicLibraryApiUrl() {
         const config = getAetherConfig();
-        return readPublicLibraryApiUrl(config);
+        const api = readPublicLibraryApiUrl(config);
+        
+        // If no explicit API is set but we are on localhost, use the built-in dev server API
+        if (!api && (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))) {
+            return '/api/public-library';
+        }
+        
+        return api;
     }
 
     canSyncPublicLibrary() {
