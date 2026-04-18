@@ -286,9 +286,8 @@ export class GameEngine {
      * Prepares and launches a game in a sandboxed iframe.
      */
     async launchGame(game, options = {}) {
-        // Create a temporary Blob URL environment for the game
         const blobUrls = {};
-        const entryUrl = this.prepareGameEnvironment(game, blobUrls);
+        const entryUrl = await this.prepareGameEnvironment(game, blobUrls);
         const safeModeEnabled = Boolean(options.safeMode);
         const launchUrl = safeModeEnabled && entryUrl
             ? `${entryUrl}${entryUrl.includes('?') ? '&' : '?'}aetherSafeMode=1`
@@ -426,17 +425,193 @@ export class GameEngine {
      * This allows the game to load relative assets (style.css, scripts, etc.)
      * directly from IndexedDB without rewriting paths.
      */
-    prepareGameEnvironment(game, blobUrls) {
+    async prepareGameEnvironment(game, blobUrls) {
         // Find the entry point and build the virtual path
         if (!game.files[game.entryPoint]) return null;
 
-        // Create Blob URLs for all files
+        const canUseVirtualFs = typeof navigator !== 'undefined'
+            && 'serviceWorker' in navigator
+            && Boolean(navigator.serviceWorker.controller);
+        if (canUseVirtualFs) {
+            if (game.isPublicMirror) {
+                const existing = await storage.getGame(game.id);
+                if (!existing) {
+                    await storage.saveGame({ ...game, _tempMirror: true });
+                }
+            }
+            return `./virtual-game/${encodeURIComponent(storage.dbName)}/${game.id}/${game.entryPoint}`;
+        }
+
+        // Create Blob URLs for all files first so we can rewrite references
         for (const [path, blob] of Object.entries(game.files)) {
             blobUrls[path] = URL.createObjectURL(blob);
         }
-        
-        // Return a relative path to be intercepted by the Service Worker
-        return `./virtual-game/${encodeURIComponent(storage.dbName)}/${game.id}/${game.entryPoint}`;
+
+        // Rewrite CSS files so any url(...) references point at blob URLs too.
+        for (const [path, blob] of Object.entries(game.files)) {
+            if (!/\.(css)$/i.test(path)) continue;
+
+            try {
+                const cssText = await blob.text();
+                const rewrittenCss = this.rewriteCssAssetUrls(cssText, game.entryPoint, blobUrls);
+                const nextBlob = new Blob([rewrittenCss], { type: blob.type || 'text/css' });
+                const previousUrl = blobUrls[path];
+                blobUrls[path] = URL.createObjectURL(nextBlob);
+                if (previousUrl) {
+                    try { URL.revokeObjectURL(previousUrl); } catch (_) {}
+                }
+            } catch (err) {
+                console.warn(`Unable to rewrite CSS asset URLs for ${path}:`, err);
+            }
+        }
+
+        // Rewrite JS modules several times so nested imports settle on final blob URLs.
+        for (let pass = 0; pass < 6; pass++) {
+            const nextJsUrls = new Map();
+
+            for (const [path, blob] of Object.entries(game.files)) {
+                if (!/\.(js|mjs)$/i.test(path)) continue;
+
+                try {
+                    const jsText = await blob.text();
+                    const rewrittenJs = this.rewriteJsModuleUrls(jsText, path, blobUrls);
+                    const nextBlob = new Blob([rewrittenJs], { type: blob.type || 'application/javascript' });
+                    nextJsUrls.set(path, URL.createObjectURL(nextBlob));
+                } catch (err) {
+                    console.warn(`Unable to rewrite JS module URLs for ${path}:`, err);
+                }
+            }
+
+            for (const [path, nextUrl] of nextJsUrls.entries()) {
+                const previousUrl = blobUrls[path];
+                blobUrls[path] = nextUrl;
+                if (previousUrl && previousUrl !== nextUrl) {
+                    try { URL.revokeObjectURL(previousUrl); } catch (_) {}
+                }
+            }
+        }
+
+        const entryBlob = game.files[game.entryPoint];
+        if (!entryBlob) return null;
+
+        const entryExt = String(game.entryPoint || '').split('.').pop().toLowerCase();
+        if (entryExt !== 'html' && entryExt !== 'htm') {
+            // Non-HTML entry points still use the virtual filesystem path.
+            return `./virtual-game/${encodeURIComponent(storage.dbName)}/${game.id}/${game.entryPoint}`;
+        }
+
+        const html = await entryBlob.text();
+        const rewritten = this.rewriteHtmlAssetUrls(html, game.entryPoint, blobUrls);
+        return URL.createObjectURL(new Blob([rewritten], { type: 'text/html' }));
+    }
+
+    normalizeRelativeAssetPath(assetPath, entryPoint) {
+        const raw = String(assetPath || '').trim();
+        if (!raw) return '';
+
+        const stripped = raw.split('#')[0].split('?')[0];
+        const entryDir = String(entryPoint || '').replace(/\\/g, '/').replace(/[^/]*$/, '');
+
+        if (!entryDir) {
+            return stripped.replace(/\\/g, '/').replace(/^\/+/, '');
+        }
+
+        try {
+            const resolved = new URL(stripped, `https://aether.invalid/${entryDir}`).pathname.replace(/^\/+/, '');
+            return resolved.replace(/\\/g, '/');
+        } catch (_) {
+            return stripped.replace(/\\/g, '/').replace(/^\/+/, '');
+        }
+    }
+
+    resolveBlobUrl(assetPath, basePath, blobUrls) {
+        const normalized = String(assetPath || '').trim();
+        if (!normalized || /^(?:[a-z]+:|\/\/|data:|blob:|#|javascript:)/i.test(normalized)) {
+            return normalized;
+        }
+
+        const candidates = new Set();
+        const stripped = normalized.split('#')[0].split('?')[0].replace(/\\/g, '/');
+        const entryDir = String(basePath || '').replace(/\\/g, '/').replace(/[^/]*$/, '');
+
+        candidates.add(stripped);
+        candidates.add(stripped.replace(/^\.\/+/, ''));
+        candidates.add(stripped.replace(/^\/+/, ''));
+
+        const normalizedRelative = this.normalizeRelativeAssetPath(stripped, basePath);
+        if (normalizedRelative) {
+            candidates.add(normalizedRelative);
+            candidates.add(`./${normalizedRelative.replace(/^\.\/+/, '')}`);
+        }
+
+        if (entryDir) {
+            candidates.add(`${entryDir}${stripped.replace(/^\/+/, '')}`.replace(/\\/g, '/').replace(/\/{2,}/g, '/'));
+        }
+
+        for (const candidate of candidates) {
+            const blobUrl = blobUrls[candidate];
+            if (blobUrl) return blobUrl;
+        }
+
+        return stripped;
+    }
+
+    rewriteHtmlAssetUrls(html, entryPoint, blobUrls) {
+        let rewrittenHtml = String(html || '')
+            .replace(/(<(?:script|img|iframe|audio|video|source|track|embed)\b[^>]*?\s(?:src|data-src|poster)=["'])([^"']+)(["'])/gi,
+                (_, prefix, url, suffix) => `${prefix}${this.resolveBlobUrl(url, entryPoint, blobUrls)}${suffix}`)
+            .replace(/(<link\b[^>]*?\shref=["'])([^"']+)(["'])/gi,
+                (_, prefix, url, suffix) => `${prefix}${this.resolveBlobUrl(url, entryPoint, blobUrls)}${suffix}`)
+            .replace(/(<form\b[^>]*?\saction=["'])([^"']+)(["'])/gi,
+                (_, prefix, url, suffix) => `${prefix}${this.resolveBlobUrl(url, entryPoint, blobUrls)}${suffix}`)
+            .replace(/(url\(\s*["']?)([^"')]+)(["']?\s*\))/gi,
+                (_, prefix, url, suffix) => `${prefix}${this.resolveBlobUrl(url, entryPoint, blobUrls)}${suffix}`);
+
+        rewrittenHtml = rewrittenHtml.replace(
+            /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
+            (match, attrs, scriptBody) => {
+                if (/\bsrc\s*=/.test(attrs) || /type\s*=\s*["']?(?:application\/json|importmap|text\/plain|application\/ld\+json)["']?/i.test(attrs)) {
+                    return match;
+                }
+
+                const isModule = /type\s*=\s*["']?module["']?/i.test(attrs) || !/type\s*=/.test(attrs);
+                if (!isModule) {
+                    return match;
+                }
+
+                const nextBody = this.rewriteJsModuleUrls(scriptBody, entryPoint, blobUrls);
+                return `<script${attrs}>${nextBody}</script>`;
+            }
+        );
+
+        rewrittenHtml = rewrittenHtml.replace(
+            /<style\b([^>]*)>([\s\S]*?)<\/style>/gi,
+            (match, attrs, styleBody) => `<style${attrs}>${this.rewriteCssAssetUrls(styleBody, entryPoint, blobUrls)}</style>`
+        );
+
+        return rewrittenHtml;
+    }
+
+    rewriteCssAssetUrls(cssText, entryPoint, blobUrls) {
+        return String(cssText || '')
+            .replace(/(@import\s+(?:url\()?\s*["']?)([^"')\s;]+)(["']?\s*(?:\))?\s*;)/gi,
+                (_, prefix, url, suffix) => `${prefix}${this.resolveBlobUrl(url, entryPoint, blobUrls)}${suffix}`)
+            .replace(/(url\(\s*["']?)([^"')]+)(["']?\s*\))/gi,
+                (_, prefix, url, suffix) => `${prefix}${this.resolveBlobUrl(url, entryPoint, blobUrls)}${suffix}`);
+    }
+
+    rewriteJsModuleUrls(jsText, modulePath, blobUrls) {
+        const rewrite = (specifier) => this.resolveBlobUrl(specifier, modulePath, blobUrls);
+
+        return String(jsText || '')
+            .replace(/(\b(?:import|export)\b[^'"`;]*?\bfrom\s*)(['"])([^'"]+)(\2)/g,
+                (_, prefix, quote, specifier, suffix) => `${prefix}${quote}${rewrite(specifier)}${suffix}`)
+            .replace(/(\bimport\b\s*)(['"])([^'"]+)(\2)/g,
+                (_, prefix, quote, specifier, suffix) => `${prefix}${quote}${rewrite(specifier)}${suffix}`)
+            .replace(/(\bimport\s*\(\s*)(['"])([^'"]+)(\2)(\s*\))/g,
+                (_, prefix, quote, specifier, suffix, tail) => `${prefix}${quote}${rewrite(specifier)}${suffix}${tail}`)
+            .replace(/(new\s+URL\s*\(\s*)(['"])([^'"]+)(\2)(\s*,\s*import\.meta\.url\s*\))/g,
+                (_, prefix, quote, specifier, suffix, tail) => `${prefix}${quote}${rewrite(specifier)}${suffix}${tail}`);
     }
 }
 

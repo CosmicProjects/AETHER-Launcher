@@ -2540,22 +2540,6 @@ export class UIManager {
         if (!iframe) return;
 
         try {
-            const frameWindow = iframe.contentWindow;
-            const frameDocument = iframe.contentDocument || frameWindow?.document;
-
-            if (frameDocument) {
-                frameDocument.querySelectorAll('audio, video').forEach((media) => {
-                    try {
-                        media.pause();
-                        media.removeAttribute('src');
-                        media.load?.();
-                    } catch (err) {
-                        console.warn('Failed to pause media during game shutdown:', err);
-                    }
-                });
-            }
-
-            frameWindow?.stop?.();
             iframe.src = 'about:blank';
         } catch (err) {
             console.warn('Failed to stop game frame cleanly:', err);
@@ -2632,7 +2616,7 @@ export class UIManager {
                 </div>
             </div>
             <div class="flex-1 bg-black relative">
-                <iframe src="about:blank" class="w-full h-full border-none" sandbox="allow-scripts allow-forms allow-pointer-lock"></iframe>
+                <iframe src="about:blank" class="w-full h-full border-none" sandbox="allow-scripts allow-forms allow-pointer-lock allow-same-origin"></iframe>
                 <div class="loader game-window-loader absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div class="w-12 h-12 border-4 border-brand-primary/20 border-t-brand-primary rounded-full animate-spin"></div>
                 </div>
@@ -2695,7 +2679,7 @@ export class UIManager {
             }
         });
 
-        this.activeWindows.push({ gameId, el: winEl, launchResult });
+        this.activeWindows.push({ gameId, el: winEl, launchResult, isPublicMirror });
 
         if (persistLaunchState) {
             // Update play count
@@ -2769,6 +2753,11 @@ export class UIManager {
             const win = this.activeWindows[index];
             if (win.el.dataset.closing === 'true') return;
             win.el.dataset.closing = 'true';
+            if (win.isPublicMirror) {
+                storage.getGame(gameId).then(game => {
+                    if (game?._tempMirror) storage.deleteGame(gameId);
+                }).catch(() => {});
+            }
             if (this.pendingRecoverySession?.gameId === gameId) {
                 void this.clearRecoverySession();
             }
