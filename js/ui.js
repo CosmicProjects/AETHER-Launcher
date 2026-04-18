@@ -813,24 +813,6 @@ export class UIManager {
         return this.publicGames;
     }
 
-    getCombinedLibraryGames(localGames = []) {
-        const combined = new Map();
-
-        for (const game of this.publicGames || []) {
-            if (game?.id) {
-                combined.set(game.id, game);
-            }
-        }
-
-        for (const game of localGames || []) {
-            if (game?.id) {
-                combined.set(game.id, game);
-            }
-        }
-
-        return Array.from(combined.values());
-    }
-
     getPublicChangelogEntries(changelog) {
         const allowedTypes = new Set(['import', 'update', 'repair', 'repair-failed']);
 
@@ -1168,6 +1150,7 @@ export class UIManager {
         return {
             id: game.id,
             title: game.title || 'Untitled Game',
+            author: globalThis.__AETHER_AUTH__?.user?.username || 'Anonymous',
             description: publicDescription,
             entryPoint: game.entryPoint || null,
             thumbnail: game.thumbnail || this.generateFallbackThumb(game.title || 'Untitled Game'),
@@ -1188,6 +1171,29 @@ export class UIManager {
             encodedFiles,
             fileTypes
         };
+    }
+
+    getCombinedLibraryGames(localGames = []) {
+        const combined = new Map();
+        const currentUsername = globalThis.__AETHER_AUTH__?.user?.username;
+
+        // Automatically include games authored by the current user from the public catalog
+        if (currentUsername && currentUsername !== 'Guest') {
+            for (const game of this.publicGames || []) {
+                if (game?.author === currentUsername) {
+                    combined.set(game.id, game);
+                }
+            }
+        }
+
+        // Include user's locally saved games
+        for (const game of localGames || []) {
+            if (game?.id) {
+                combined.set(game.id, game);
+            }
+        }
+
+        return Array.from(combined.values());
     }
 
     async publishGameToPublicLibrary(game) {
@@ -2170,8 +2176,29 @@ export class UIManager {
         lucide.createIcons();
 
         grid.querySelectorAll('.game-card').forEach(card => {
+            const id = card.dataset.id;
+            
+            // Add to Library button
+            const addBtn = card.querySelector('.add-to-lib-btn');
+            if (addBtn) {
+                storage.getGame(id).then(exists => {
+                    if (exists) {
+                        addBtn.classList.remove('bg-brand-primary/20', 'text-brand-primary');
+                        addBtn.classList.add('bg-emerald-500/20', 'text-emerald-500');
+                        addBtn.title = 'In Library';
+                        addBtn.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i>';
+                        lucide.createIcons();
+                    }
+                });
+
+                addBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.addGameToLibrary(id);
+                });
+            }
+
             card.addEventListener('click', () => {
-                this.openGameWindow(card.dataset.id);
+                this.openGameWindow(id);
             });
         });
     }
@@ -2223,7 +2250,11 @@ export class UIManager {
                             <div class="flex items-center gap-2">
                                 <span class="game-card-pill game-card-pill-accent shrink-0">${game.type}</span>
                                 <div class="flex-1 min-w-0"></div>
-                                ${isPublicMirror ? '' : `
+                                ${isPublicMirror ? `
+                                    <button class="add-to-lib-btn shrink-0 p-2 bg-brand-primary/20 backdrop-blur-md rounded-lg text-brand-primary hover:bg-brand-primary hover:text-white transition-all active:scale-90" title="Add to Library">
+                                        <i data-lucide="plus" class="w-4 h-4"></i>
+                                    </button>
+                                ` : `
                                     <button class="fav-btn shrink-0 p-2 bg-black/40 backdrop-blur-md rounded-lg text-white/60 hover:text-brand-primary transition-all active:scale-90" title="Toggle Favorite">
                                         <i data-lucide="${game.isFavorite ? 'heart-off' : 'heart'}" class="w-4 h-4 ${game.isFavorite ? 'fill-brand-primary text-brand-primary' : ''}"></i>
                                     </button>
@@ -2556,11 +2587,49 @@ export class UIManager {
     /**
      * Window Management System
      */
+    async addGameToLibrary(gameId) {
+        const game = await this.getGameForAction(gameId);
+        if (!game) return;
+
+        // Strip public mirror flag and save to current user's local database
+        const localCopy = this.clonePublicGame(game);
+        localCopy.isPublicMirror = false;
+        localCopy.addedAt = Date.now();
+        
+        await storage.saveGame(localCopy);
+        this.notify('Added to Library', `"${game.title}" is now in your personal collection.`, 'success');
+        
+        if (this.currentView === 'community') {
+            this.renderCommunity();
+        } else {
+            this.refreshCurrentView();
+        }
+    }
+
     async openGameWindow(gameId) {
         const game = await this.getGameForAction(gameId);
         if (!game) return;
         const isPublicMirror = this.isPublicMirrorGame(game);
-        const persistLaunchState = !isPublicMirror;
+        
+        // If it's a public game being launched, ensure it's in the user's local library
+        if (isPublicMirror) {
+            const exists = await storage.getGame(gameId);
+            if (!exists) {
+                const localCopy = this.clonePublicGame(game);
+                localCopy.isPublicMirror = false;
+                localCopy.addedAt = Date.now();
+                localCopy.lastPlayed = Date.now();
+                localCopy.playCount = 1;
+                await storage.saveGame(localCopy);
+            } else {
+                exists.lastPlayed = Date.now();
+                exists.playCount = (exists.playCount || 0) + 1;
+                await storage.saveGame(exists);
+            }
+        }
+
+        // Once launched or added, treat it as a library game for state persistence
+        const persistLaunchState = true;
 
         // Check if already open
         if (this.activeWindows.some(w => w.gameId === gameId)) {
@@ -2924,7 +2993,12 @@ export class UIManager {
 
     async renderUpdates() {
         const view = document.getElementById('view-updates');
-        const games = await storage.getAllGames();
+        if (!view) return;
+        
+        await this.loadPublicLibrary();
+        const localGames = await storage.getAllGames();
+        const games = this.getCombinedLibraryGames(localGames);
+        
         const updateCount = games.filter(game => game.updateAvailable).length;
         const sortedGames = [...games].sort((a, b) => {
             const updateDelta = Number(Boolean(b.updateAvailable)) - Number(Boolean(a.updateAvailable));

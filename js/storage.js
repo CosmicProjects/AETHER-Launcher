@@ -62,10 +62,19 @@ class StorageManager {
 
     async saveGame(gameData) {
         if (!this.db) await this.init();
+        
+        // Ensure the game is tagged with the current user context
+        const userId = this.dbName;
+        const gameWithOwner = {
+            ...gameData,
+            ownerId: userId,
+            lastUpdatedAt: Date.now()
+        };
+
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['games'], 'readwrite');
             const store = transaction.objectStore('games');
-            const request = store.put(gameData);
+            const request = store.put(gameWithOwner);
 
             request.onsuccess = () => resolve(gameData.id);
             request.onerror = () => reject(request.error);
