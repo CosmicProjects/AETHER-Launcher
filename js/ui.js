@@ -2634,8 +2634,58 @@ export class UIManager {
                         `).join('')}
                     </div>
                 </div>
+
+                <div class="mt-8 glass-panel p-6 rounded-2xl border border-white/5 bg-brand-primary/5">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-xl font-800 text-white mb-1">Global Catalog Push</h3>
+                            <p class="text-white/40 text-sm font-500">Sync all your current local games to the permanent public library file.</p>
+                        </div>
+                        <button id="promote-all-btn" class="px-6 py-3 rounded-xl bg-brand-primary text-white font-700 active:scale-95 transition-all flex items-center gap-2">
+                             <i data-lucide="globe" class="w-5 h-5"></i>
+                             Promote All to Global
+                        </button>
+                    </div>
+                    <div id="promote-status" class="hidden mt-4 p-4 rounded-xl bg-black/40 border border-white/10 text-xs font-mono text-white/60 max-h-48 overflow-y-auto">
+                    </div>
+                </div>
             </div>
         `;
+
+        if (view) {
+            const btn = view.querySelector('#promote-all-btn');
+            const statusBox = view.querySelector('#promote-status');
+            if (btn) {
+                btn.addEventListener('click', async () => {
+                    const localGames = await storage.getAllGames();
+                    if (localGames.length === 0) {
+                        this.notify('No Games Found', 'Your local library is currently empty.', 'warning');
+                        return;
+                    }
+
+                    btn.disabled = true;
+                    btn.classList.add('opacity-50', 'cursor-not-allowed');
+                    statusBox.classList.remove('hidden');
+                    statusBox.innerHTML = `> Found ${localGames.length} local games...<br>> Initializing sync to ${this.getPublicLibraryApiUrl()}...`;
+
+                    let successCount = 0;
+                    for (const game of localGames) {
+                        statusBox.innerHTML += `<br>> Publishing "${game.title}"...`;
+                        statusBox.scrollTop = statusBox.scrollHeight;
+                        const success = await this.publishGameToPublicLibrary(game);
+                        if (success) successCount++;
+                    }
+
+                    statusBox.innerHTML += `<br>> 🏁 Finished! ${successCount}/${localGames.length} games synced to public library file.`;
+                    statusBox.innerHTML += `<br>> IMPORTANT: Now commit and push "data/public-library.json" to GitHub to update the live site.`;
+                    statusBox.scrollTop = statusBox.scrollHeight;
+
+                    this.notify('Sync Complete', `Successfully promoted ${successCount} games to global catalog.`, 'success');
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                });
+            }
+        }
         lucide.createIcons();
     }
 
