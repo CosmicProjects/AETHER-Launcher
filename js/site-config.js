@@ -1,5 +1,5 @@
 window.__AETHER_CONFIG__ = {
-    publicLibraryApiUrl: 'http://localhost:8080/api/public-library',
+    publicLibraryApiUrl: '',
     publicLibraryReadUrl: './data/public-library.json',
     firebase: {
         url: ''
