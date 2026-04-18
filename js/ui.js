@@ -2145,6 +2145,11 @@ export class UIManager {
         const emptyState = document.getElementById('community-empty');
         if (!grid) return;
 
+        const titleEl = document.getElementById('view-library-title');
+        const descEl = document.getElementById('view-library-desc');
+        if (titleEl) titleEl.textContent = LIBRARY_VIEWS.community.title;
+        if (descEl) descEl.textContent = LIBRARY_VIEWS.community.description;
+
         grid.innerHTML = '<div class="col-span-full py-20 flex justify-center"><div class="w-12 h-12 border-4 border-brand-primary border-t-transparent rounded-full animate-spin"></div></div>';
         
         await this.loadPublicLibrary({ force: true });
