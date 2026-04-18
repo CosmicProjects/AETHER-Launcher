@@ -288,10 +288,21 @@ export class UIManager {
         return readUrl || './data/public-library.json';
     }
 
+    getPublicLibraryFirebaseConfig() {
+        const config = getAetherConfig();
+        const url = String(config.firebase?.url || config.firebaseUrl || '').trim().replace(/\/$/, '');
+        return { configured: Boolean(url), url };
+    }
+
     getPublicLibrarySyncTarget() {
         const apiUrl = this.getPublicLibraryApiUrl();
         if (apiUrl) {
             return { kind: 'api', apiUrl };
+        }
+
+        const firebaseConfig = this.getPublicLibraryFirebaseConfig();
+        if (firebaseConfig.configured) {
+            return { kind: 'firebase', ...firebaseConfig };
         }
 
         const supabaseConfig = this.getPublicLibrarySupabaseConfig();
@@ -876,6 +887,46 @@ export class UIManager {
         }
     }
 
+    async loadPublicLibraryFromFirebase() {
+        const config = this.getPublicLibraryFirebaseConfig();
+        if (!config.configured) return null;
+
+        try {
+            const response = await fetch(`${config.url}/community_games.json`, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            if (!data || typeof data !== 'object') return [];
+            return Object.values(data).filter(g => g && typeof g === 'object');
+        } catch (err) {
+            console.warn('Unable to load public library from Firebase:', err);
+            return null;
+        }
+    }
+
+    async publishGameToFirebase(payload) {
+        const config = this.getPublicLibraryFirebaseConfig();
+        if (!config.configured) return false;
+
+        const response = await fetch(`${config.url}/community_games/${encodeURIComponent(payload.id)}.json`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return true;
+    }
+
+    async removeGameFromFirebase(gameId) {
+        const config = this.getPublicLibraryFirebaseConfig();
+        if (!config.configured) return false;
+
+        const response = await fetch(`${config.url}/community_games/${encodeURIComponent(gameId)}.json`, {
+            method: 'DELETE'
+        });
+        return response.ok;
+    }
+
     bytesToBase64(bytes) {
         const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
         let binary = '';
@@ -1002,6 +1053,11 @@ export class UIManager {
                 sources.push({ url: apiUrl, kind: 'api' });
             }
 
+            const firebaseConfig = this.getPublicLibraryFirebaseConfig();
+            if (firebaseConfig.configured) {
+                sources.push({ kind: 'firebase' });
+            }
+
             if (supabaseConfig.configured) {
                 sources.push({ kind: 'supabase' });
             }
@@ -1016,6 +1072,18 @@ export class UIManager {
 
             for (const source of sources) {
                 try {
+                    if (source.kind === 'firebase') {
+                        const firebaseGames = await this.loadPublicLibraryFromFirebase();
+                        if (firebaseGames === null) continue;
+                        const hydratedGames = [];
+                        for (const rawGame of firebaseGames) {
+                            const hydrated = await this.hydratePublicGame(rawGame);
+                            if (hydrated) hydratedGames.push(hydrated);
+                        }
+                        this.publicLibrarySource = 'firebase';
+                        return this.setPublicGames(hydratedGames);
+                    }
+
                     if (source.kind === 'supabase') {
                         const supabaseGames = await this.loadPublicLibraryFromSupabase();
                         if (supabaseGames === null) {
@@ -1151,6 +1219,9 @@ export class UIManager {
                 }
 
                 publishedGame = await this.hydratePublicGame(data.game || payload);
+            } else if (syncTarget.kind === 'firebase') {
+                await this.publishGameToFirebase(payload);
+                publishedGame = await this.hydratePublicGame(payload);
             } else if (syncTarget.kind === 'supabase') {
                 const response = await fetch(
                     `${syncTarget.supabaseUrl}/rest/v1/${encodeURIComponent(syncTarget.supabaseTable)}?on_conflict=id`,
@@ -1222,6 +1293,8 @@ export class UIManager {
                 if (!response.ok || !data?.success) {
                     throw new Error(data?.error || `HTTP ${response.status}`);
                 }
+            } else if (syncTarget.kind === 'firebase') {
+                await this.removeGameFromFirebase(gameId);
             } else if (syncTarget.kind === 'supabase') {
                 const response = await fetch(
                     `${syncTarget.supabaseUrl}/rest/v1/${encodeURIComponent(syncTarget.supabaseTable)}?id=eq.${encodeURIComponent(gameId)}`,
