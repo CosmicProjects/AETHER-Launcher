@@ -201,7 +201,7 @@ const LIBRARY_VIEWS = {
 
 export class UIManager {
     constructor() {
-        this.currentView = 'featured';
+        this.currentView = 'community';
         this.searchQuery = '';
         this.activeWindows = [];
         this.publicLibraryReady = this.loadPublicLibrary();
@@ -1730,7 +1730,7 @@ export class UIManager {
         const featuredPlayBtn = document.getElementById('featured-play-btn');
         if (featuredPlayBtn) {
             featuredPlayBtn.addEventListener('click', () => {
-                this.requireAuth(() => this.switchView('library'));
+                this.switchView('community');
             });
         }
 
@@ -2093,7 +2093,7 @@ export class UIManager {
 
         grid.querySelectorAll('.game-card').forEach(card => {
             card.addEventListener('click', () => {
-                this.requireAuth(() => this.openGameWindow(card.dataset.id));
+                this.openGameWindow(card.dataset.id);
             });
         });
     }
