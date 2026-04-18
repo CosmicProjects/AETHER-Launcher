@@ -4,6 +4,8 @@
  */
 
 const DB_VERSION = 1;
+const GAMES_STORE_NAME = 'games';
+const SETTINGS_STORE_NAME = 'settings';
 const SAFE_MODE_STORAGE_KEY = 'safeModeEnabled';
 
 const SAFE_MODE_GUARD_SCRIPT = `(() => {
@@ -107,8 +109,20 @@ async function handleVirtualRequest(request, url) {
         
         dbRequest.onsuccess = (event) => {
             const db = event.target.result;
-            const transaction = db.transaction(['games'], 'readonly');
-            const store = transaction.objectStore('games');
+            if (!db.objectStoreNames.contains(GAMES_STORE_NAME)) {
+                resolve(new Response('Game Container Not Found (Missing games store)', { status: 404 }));
+                return;
+            }
+
+            let store;
+            try {
+                const transaction = db.transaction([GAMES_STORE_NAME], 'readonly');
+                store = transaction.objectStore(GAMES_STORE_NAME);
+            } catch (err) {
+                console.error('[SW] Unable to open games store:', err);
+                resolve(new Response('Game Container Not Found (Unable to open store)', { status: 404 }));
+                return;
+            }
             
             // Try string ID first (for UUIDs and labels)
             const getRequest = store.get(gameId);
@@ -197,13 +211,20 @@ function isHtmlDocument(path, contentType) {
 
 async function getSettingValue(db, key, defaultValue = null) {
     return new Promise((resolve) => {
-        if (!db.objectStoreNames.contains('settings')) {
+        if (!db.objectStoreNames.contains(SETTINGS_STORE_NAME)) {
             resolve(defaultValue);
             return;
         }
 
-        const transaction = db.transaction(['settings'], 'readonly');
-        const store = transaction.objectStore('settings');
+        let store;
+        try {
+            const transaction = db.transaction([SETTINGS_STORE_NAME], 'readonly');
+            store = transaction.objectStore(SETTINGS_STORE_NAME);
+        } catch (_) {
+            resolve(defaultValue);
+            return;
+        }
+
         const request = store.get(key);
 
         request.onsuccess = () => {
