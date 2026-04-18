@@ -4,6 +4,7 @@
  */
 
 import { ui } from './ui.js';
+import { storage } from './storage.js';
 
 export class AuthManager {
     constructor() {
@@ -91,6 +92,9 @@ export class AuthManager {
         this.user = userData;
         this.saveSession();
         this.updateUI();
+        storage.switchUser(userData?.username || null).then(() => {
+            ui.renderLibrary();
+        });
     }
 
     bindEvents() {

@@ -5,9 +5,29 @@
 
 class StorageManager {
     constructor() {
-        this.dbName = 'AetherLauncherDB';
+        this.dbName = this._resolveDbName();
         this.dbVersion = 1;
         this.db = null;
+    }
+
+    _resolveDbName() {
+        try {
+            const session = localStorage.getItem('aether_session');
+            if (session) {
+                const { username } = JSON.parse(session);
+                if (username) return `AetherLauncherDB_${username}`;
+            }
+        } catch (e) {}
+        return 'AetherLauncherDB_guest';
+    }
+
+    async switchUser(username) {
+        if (this.db) {
+            this.db.close();
+            this.db = null;
+        }
+        this.dbName = username ? `AetherLauncherDB_${username}` : 'AetherLauncherDB_guest';
+        await this.init();
     }
 
     async init() {
