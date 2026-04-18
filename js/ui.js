@@ -246,7 +246,7 @@ export class UIManager {
             return callback();
         }
 
-        this.notify('Sign In Required', 'Please log in to access this feature.', 'info');
+        this.notify('Sign In Required', 'Please sign in or continue as guest to access this feature.', 'info');
         globalThis.__AETHER_AUTH__?.openModal();
     }
 
@@ -3515,6 +3515,8 @@ export class UIManager {
     async renderProfile() {
         const authManager = globalThis.__AETHER_AUTH__;
         const user = authManager?.user;
+        const isGuest = Boolean(user?.guest);
+        const displayName = user?.displayName || user?.username || '';
         const view = document.getElementById('view-profile');
         
         if (!user) {
@@ -3533,15 +3535,15 @@ export class UIManager {
         view.innerHTML = `
             <div class="max-w-3xl mx-auto space-y-8 pb-12">
                 <div>
-                     <p class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-primary/80 mb-2">Account Center</p>
-                    <h2 class="text-4xl font-900 mb-2">User Profile</h2>
-                    <p class="text-white/40 text-sm font-500 max-w-xl">Customize your identity and how you appear in the launcher.</p>
+                     <p class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-primary/80 mb-2">${isGuest ? 'Guest Session' : 'Account Center'}</p>
+                    <h2 class="text-4xl font-900 mb-2">${isGuest ? 'Guest Profile' : 'User Profile'}</h2>
+                    <p class="text-white/40 text-sm font-500 max-w-xl">${isGuest ? 'This session stays local on this device. Sign in anytime if you want a named profile.' : 'Customize your identity and how you appear in the launcher.'}</p>
                 </div>
 
                 <div class="glass-panel p-8 rounded-[2rem] flex flex-col md:flex-row items-center gap-10">
                     <div id="profile-avatar-trigger" class="relative group cursor-pointer w-40 h-40 shrink-0">
                         <div id="profile-avatar-display" class="w-full h-full rounded-full bg-gradient-to-tr from-brand-primary to-brand-secondary flex items-center justify-center text-5xl font-800 text-white shadow-2xl shadow-brand-primary/30 border-4 border-white/10 overflow-hidden transition-all duration-300 group-hover:scale-[1.02] group-hover:border-brand-primary/40">
-                            ${user.avatar ? `<img src="${user.avatar}" class="w-full h-full object-cover">` : (user.username || 'P').charAt(0).toUpperCase()}
+                            ${user.avatar ? `<img src="${user.avatar}" class="w-full h-full object-cover">` : (displayName || 'P').charAt(0).toUpperCase()}
                         </div>
                         <div class="absolute inset-0 bg-black/60 backdrop-blur-sm rounded-full flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300">
                             <i data-lucide="camera" class="w-8 h-8 text-white mb-2"></i>
@@ -3566,7 +3568,7 @@ export class UIManager {
                         <div class="space-y-2">
                             <label class="text-[10px] font-800 uppercase tracking-widest text-white/30 px-1">Display Name</label>
                             <div class="flex flex-col sm:flex-row gap-3">
-                                <input type="text" id="profile-username" value="${user.username || ''}" class="flex-1 bg-white/5 border border-white/10 rounded-2xl py-3.5 px-5 focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary/40 transition-all font-600 text-lg">
+                                <input type="text" id="profile-display-name" value="${displayName}" class="flex-1 bg-white/5 border border-white/10 rounded-2xl py-3.5 px-5 focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary/40 transition-all font-600 text-lg">
                                 <button id="save-profile-btn" class="bg-brand-primary hover:shadow-lg hover:shadow-brand-primary/40 px-8 py-3.5 rounded-2xl font-800 transition-all active:scale-95 shrink-0">
                                     Save Changes
                                 </button>
@@ -3600,7 +3602,7 @@ export class UIManager {
                 <div class="pt-6 flex justify-center">
                     <button id="profile-sign-out" class="flex items-center gap-2.5 px-8 py-4 rounded-2xl border border-red-500/20 bg-red-500/5 text-red-300 font-800 transition-all active:scale-95 hover:bg-red-500/10 hover:border-red-500/40">
                         <i data-lucide="log-out" class="w-5 h-5"></i>
-                        Sign Out of Session
+                        ${isGuest ? 'Leave Guest Session' : 'Sign Out of Session'}
                     </button>
                 </div>
             </div>
@@ -3616,10 +3618,10 @@ export class UIManager {
             if (!file || !file.type.startsWith('image/')) return;
             
             const reader = new FileReader();
-            reader.onload = (e) => {
+            reader.onload = async (e) => {
                 const dataUrl = e.target.result;
                 user.avatar = dataUrl;
-                authManager.saveSession();
+                await authManager.saveSession();
                 authManager.updateUI();
                 this.renderProfile();
                 this.notify('Avatar Updated', 'Your custom profile photo has been set.', 'success');
@@ -3655,7 +3657,7 @@ export class UIManager {
                 ctx.fillRect(0, 0, 128, 128);
                 
                 user.avatar = canvas.toDataURL('image/png');
-                authManager.saveSession();
+                await authManager.saveSession();
                 authManager.updateUI();
                 this.renderProfile();
                 this.notify('Avatar Changed', 'Preset avatar applied successfully.', 'success');
@@ -3664,11 +3666,11 @@ export class UIManager {
 
         const saveBtn = view.querySelector('#save-profile-btn');
         if (saveBtn) {
-            saveBtn.addEventListener('click', () => {
-                const newName = view.querySelector('#profile-username').value.trim();
+            saveBtn.addEventListener('click', async () => {
+                const newName = view.querySelector('#profile-display-name').value.trim();
                 if (newName && authManager) {
-                    authManager.user.username = newName;
-                    authManager.saveSession();
+                    authManager.user.displayName = newName;
+                    await authManager.saveSession();
                     authManager.updateUI();
                     this.notify('Profile Updated', `You are now known as ${newName}.`, 'success');
                     this.renderProfile();

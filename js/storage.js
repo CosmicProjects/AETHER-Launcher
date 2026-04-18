@@ -14,7 +14,9 @@ class StorageManager {
         try {
             const session = localStorage.getItem('aether_session');
             if (session) {
-                const { username } = JSON.parse(session);
+                const parsed = JSON.parse(session);
+                if (parsed?.guest) return 'AetherLauncherDB_guest';
+                const { username } = parsed;
                 if (username) return `AetherLauncherDB_${username}`;
             }
         } catch (e) {}
@@ -118,6 +120,10 @@ class StorageManager {
         });
     }
 
+    async saveProfile(profile) {
+        return this.saveSetting('profile', profile);
+    }
+
     async getSetting(key, defaultValue = null) {
         if (!this.db) await this.init();
         return new Promise((resolve, reject) => {
@@ -128,6 +134,10 @@ class StorageManager {
             request.onsuccess = () => resolve(request.result ? request.result.value : defaultValue);
             request.onerror = () => reject(request.error);
         });
+    }
+
+    async getProfile(defaultValue = null) {
+        return this.getSetting('profile', defaultValue);
     }
 }
 
