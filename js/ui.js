@@ -9,8 +9,7 @@ import { env } from './envDetector.js';
 import { generateTitleArtwork } from './artwork.js';
 import {
     getAetherConfig,
-    getConfiguredSupabaseConfig,
-    getPublicLibraryApiUrl as readPublicLibraryApiUrl
+    readPublicLibraryApiUrl
 } from './runtimeConfig.js';
 
 const DEFAULT_THEME_ID = 'unicorn';
@@ -147,22 +146,6 @@ function inferPublicMimeType(pathValue, fallback = 'application/octet-stream') {
     return PUBLIC_FILE_MIME_TYPES[ext] || fallback;
 }
 
-function getSiteConfig() {
-    return getAetherConfig();
-}
-
-function getSupabasePublicLibraryConfig() {
-    const config = getSiteConfig();
-    const supabaseConfig = getConfiguredSupabaseConfig(config);
-    const supabaseTable = String(config.supabaseTable || config.supabasePublicGamesTable || 'public_games').trim() || 'public_games';
-
-    return {
-        ...supabaseConfig,
-        supabaseTable,
-        publicLibraryApiUrl: readPublicLibraryApiUrl(config)
-    };
-}
-
 const LIBRARY_VIEWS = {
     library: {
         eyebrow: 'Collection Overview',
@@ -219,18 +202,7 @@ export class UIManager {
         this.currentView = 'featured';
         this.searchQuery = '';
         this.activeWindows = [];
-        this.safeModeEnabled = false;
-        this.systemNotificationsEnabled = false;
-        this.themeId = DEFAULT_THEME_ID;
-        this.activeTheme = THEME_MAP.get(DEFAULT_THEME_ID);
-        this.pendingRecoverySession = null;
-        this.recoverySessionToken = null;
-        this.storageSelectionId = null;
-        this.launchOverlayHideTimer = null;
-        this.launchOverlaySequence = 0;
-        this.gameUpdateCheckInProgress = false;
-        this.publicGames = [];
-        this.publicLibraryReady = null;
+        this.publicLibraryReady = this.loadPublicLibrary();
         this.preferencesReady = this.loadPreferences();
         this.libraryViewNames = new Set([...Object.keys(LIBRARY_VIEWS), 'recent']);
         this.zIndices = {
@@ -262,6 +234,19 @@ export class UIManager {
         void this.scanForGameUpdates({ notify: true });
     }
 
+    isAuthenticated() {
+        return Boolean(globalThis.__AETHER_AUTH__?.user);
+    }
+
+    requireAuth(callback) {
+        if (this.isAuthenticated()) {
+            return callback();
+        }
+
+        this.notify('Sign In Required', 'Please log in to access this feature.', 'info');
+        globalThis.__AETHER_AUTH__?.openModal();
+    }
+
     async loadPreferences() {
         try {
             this.safeModeEnabled = await storage.getSetting('safeModeEnabled', false);
@@ -278,21 +263,12 @@ export class UIManager {
         }
     }
 
-    getAuthManager() {
-        return (typeof globalThis !== 'undefined' && globalThis.__AETHER_AUTH__) || null;
-    }
 
-    getSupabaseClient() {
-        return this.getAuthManager()?.supabase || null;
-    }
 
-    getPreferencesTableName() {
-        const config = getSiteConfig();
-        return String(config.supabasePreferencesTable || 'launcher_preferences').trim() || 'launcher_preferences';
-    }
+
 
     getPublicLibraryApiUrl() {
-        const config = getSiteConfig();
+        const config = getAetherConfig();
         return readPublicLibraryApiUrl(config);
     }
 
@@ -300,115 +276,11 @@ export class UIManager {
         return Boolean(this.getPublicLibraryApiUrl());
     }
 
-    async getAuthenticatedUser() {
-        const authManager = this.getAuthManager();
-        if (!authManager?.getCurrentUser) {
-            return null;
-        }
 
-        try {
-            return await authManager.getCurrentUser();
-        } catch (err) {
-            console.warn('Unable to read authenticated user for preference sync:', err);
-            return null;
-        }
-    }
 
-    async loadCloudPreferences() {
-        const client = this.getSupabaseClient();
-        const user = await this.getAuthenticatedUser();
 
-        if (!client || !user) {
-            return null;
-        }
 
-        try {
-            const { data, error } = await client
-                .from(this.getPreferencesTableName())
-                .select('theme_id,safe_mode_enabled,system_notifications_enabled,updated_at')
-                .eq('user_id', user.id)
-                .maybeSingle();
 
-            if (error && error.code !== 'PGRST116') {
-                throw error;
-            }
-
-            return data || null;
-        } catch (err) {
-            console.warn('Unable to load cloud preferences:', err);
-            return null;
-        }
-    }
-
-    async saveCloudPreferences() {
-        const client = this.getSupabaseClient();
-        const user = await this.getAuthenticatedUser();
-
-        if (!client || !user) {
-            return false;
-        }
-
-        try {
-            const payload = {
-                user_id: user.id,
-                theme_id: this.themeId,
-                safe_mode_enabled: Boolean(this.safeModeEnabled),
-                system_notifications_enabled: Boolean(this.systemNotificationsEnabled),
-                updated_at: Date.now()
-            };
-
-            const { error } = await client
-                .from(this.getPreferencesTableName())
-                .upsert(payload, { onConflict: 'user_id' });
-
-            if (error) {
-                throw error;
-            }
-
-            return true;
-        } catch (err) {
-            console.warn('Unable to save cloud preferences:', err);
-            return false;
-        }
-    }
-
-    async syncPreferencesFromCloud() {
-        const cloudPreferences = await this.loadCloudPreferences();
-        if (!cloudPreferences) {
-            return this.saveCloudPreferences();
-        }
-
-        const themeId = cloudPreferences.theme_id || DEFAULT_THEME_ID;
-        const safeModeEnabled = Boolean(cloudPreferences.safe_mode_enabled);
-        const systemNotificationsEnabled = Boolean(cloudPreferences.system_notifications_enabled);
-
-        this.applyTheme(themeId);
-        this.safeModeEnabled = safeModeEnabled;
-        this.systemNotificationsEnabled = systemNotificationsEnabled;
-
-        try {
-            await storage.saveSetting('themeId', this.themeId);
-            await storage.saveSetting('safeModeEnabled', this.safeModeEnabled);
-            await storage.saveSetting('systemNotificationsEnabled', this.systemNotificationsEnabled);
-        } catch (err) {
-            console.warn('Unable to persist synced preferences locally:', err);
-        }
-
-        if (this.currentView === 'settings') {
-            this.renderSettings();
-        }
-
-        return true;
-    }
-
-    async onAuthSessionChanged(user) {
-        if (!user) {
-            return;
-        }
-
-        await this.preferencesReady;
-        await this.syncPreferencesFromCloud();
-    }
 
     getTheme(themeId = this.themeId) {
         return THEME_MAP.get(themeId) || THEME_MAP.get(DEFAULT_THEME_ID) || THEMES[0];
@@ -445,7 +317,6 @@ export class UIManager {
 
         if (changed) {
             await storage.saveSetting('themeId', theme.id);
-            void this.saveCloudPreferences();
         }
 
         this.refreshCurrentView();
@@ -513,7 +384,6 @@ export class UIManager {
     async setSafeModeEnabled(enabled) {
         this.safeModeEnabled = Boolean(enabled);
         await storage.saveSetting('safeModeEnabled', this.safeModeEnabled);
-        void this.saveCloudPreferences();
 
         if (this.currentView === 'settings') {
             this.renderSettings();
@@ -541,7 +411,6 @@ export class UIManager {
 
         this.systemNotificationsEnabled = permission === 'granted';
         await storage.saveSetting('systemNotificationsEnabled', this.systemNotificationsEnabled);
-        void this.saveCloudPreferences();
 
         if (this.currentView === 'settings') {
             this.renderSettings();
@@ -1040,20 +909,7 @@ export class UIManager {
         }
 
         this.publicLibraryReady = (async () => {
-            const supabaseGames = await this.loadPublicLibraryFromSupabase();
-            if (supabaseGames !== null) {
-                const hydratedGames = [];
 
-                for (const rawGame of supabaseGames) {
-                    const hydrated = await this.hydratePublicGame(rawGame);
-                    if (hydrated) {
-                        hydratedGames.push(hydrated);
-                    }
-                }
-
-                this.publicLibrarySource = 'supabase';
-                return this.setPublicGames(hydratedGames);
-            }
 
             const apiUrl = this.getPublicLibraryApiUrl();
             const sources = apiUrl
@@ -1686,13 +1542,33 @@ export class UIManager {
         document.querySelectorAll('.nav-item').forEach(item => {
             item.addEventListener('click', () => {
                 const view = item.dataset.nav;
-                this.switchView(view);
+                const restricted = ['library', 'favorites', 'storage', 'settings', 'updates'];
+
+                if (restricted.includes(view)) {
+                    this.requireAuth(() => this.switchView(view));
+                } else {
+                    this.switchView(view);
+                }
             });
         });
 
         const homeBtn = document.getElementById('home-btn');
         if (homeBtn) {
             homeBtn.addEventListener('click', () => this.switchView('featured'));
+        }
+
+        const featuredLibraryBtn = document.getElementById('featured-library-btn');
+        if (featuredLibraryBtn) {
+            featuredLibraryBtn.addEventListener('click', () => {
+                this.requireAuth(() => this.switchView('library'));
+            });
+        }
+
+        const featuredPlayBtn = document.getElementById('featured-play-btn');
+        if (featuredPlayBtn) {
+            featuredPlayBtn.addEventListener('click', () => {
+                this.requireAuth(() => this.switchView('library'));
+            });
         }
 
         const sortFilter = document.getElementById('sort-filter');
@@ -1734,12 +1610,22 @@ export class UIManager {
 
         // Import Buttons (All instances)
         document.querySelectorAll('#import-btn, .import-trigger').forEach(btn => {
-            btn.addEventListener('click', () => this.toggleImportModal(true));
+            btn.addEventListener('click', () => {
+                this.requireAuth(() => this.toggleImportModal(true));
+            });
         });
 
         const randomGameBtn = document.getElementById('random-game-btn');
         if (randomGameBtn) {
-            randomGameBtn.addEventListener('click', () => this.launchRandomGame());
+            randomGameBtn.addEventListener('click', () => {
+                this.requireAuth(() => this.launchRandomGame());
+            });
+        }
+
+        const userProfile = document.getElementById('user-profile');
+        if (userProfile) {
+            userProfile.addEventListener('click', () => this.switchView('profile'));
+            userProfile.classList.add('cursor-pointer', 'hover:brightness-110', 'active:scale-95', 'transition-all');
         }
 
         // Modal close
@@ -1826,6 +1712,7 @@ export class UIManager {
         if (normalizedView === 'updates') this.renderUpdates();
         if (normalizedView === 'storage') this.renderStorageManager();
         if (normalizedView === 'community') this.renderCommunity();
+        if (normalizedView === 'profile') this.renderProfile();
         if (this.libraryViewNames.has(normalizedView) && normalizedView !== 'community') this.renderLibrary();
     }
 
@@ -1969,7 +1856,9 @@ export class UIManager {
         // Bind clicks to launch
         grid.querySelectorAll('.game-card').forEach(card => {
             const id = card.dataset.id;
-            card.addEventListener('click', () => this.openGameWindow(id));
+            card.addEventListener('click', () => {
+                this.requireAuth(() => this.openGameWindow(id));
+            });
             
             // Handle buttons inside card
             const favBtn = card.querySelector('.fav-btn');
@@ -2040,7 +1929,9 @@ export class UIManager {
         lucide.createIcons();
 
         grid.querySelectorAll('.game-card').forEach(card => {
-            card.addEventListener('click', () => this.openGameWindow(card.dataset.id));
+            card.addEventListener('click', () => {
+                this.requireAuth(() => this.openGameWindow(card.dataset.id));
+            });
         });
     }
 
@@ -3225,15 +3116,12 @@ export class UIManager {
                 <div class="glass-panel p-6 rounded-2xl flex items-center justify-between gap-6">
                     <div>
                         <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-white/30 mb-2">Public Catalog</div>
-                        <div class="font-700 text-lg mb-1">Supabase-backed site data</div>
-                        <p class="text-white/40 text-sm">Public games load from Supabase when configured, and signed-in launcher preferences sync to your account. The local JSON cache remains the fallback.</p>
+                        <div class="font-700 text-lg mb-1">Local Site Data</div>
+                        <p class="text-white/40 text-sm">Public games load from local data and the configured development server. The local JSON cache remains the primary source for the static site.</p>
                     </div>
                     <div class="flex flex-col items-end gap-2">
-                        <div class="px-3 py-1 rounded-full border text-xs font-700 ${this.getPublicLibrarySupabaseConfig().configured ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-100' : 'border-white/10 bg-white/5 text-white/50'}">
-                            ${this.getPublicLibrarySupabaseConfig().configured ? 'Connected' : 'Fallback mode'}
-                        </div>
-                        <div class="text-[10px] font-800 uppercase tracking-[0.28em] ${this.getAuthManager()?.user ? 'text-brand-accent/70' : 'text-white/25'}">
-                            ${this.getAuthManager()?.user ? 'Preferences sync active' : 'Sign in to sync preferences'}
+                        <div class="px-3 py-1 rounded-full border border-white/10 bg-white/5 text-white/50 text-xs font-700">
+                             Standalone Mode
                         </div>
                     </div>
                 </div>
@@ -3342,6 +3230,177 @@ export class UIManager {
                 this.renderStorageManager();
             }
             this.renderLibrary();
+        }
+    }
+    async renderProfile() {
+        const authManager = globalThis.__AETHER_AUTH__;
+        const user = authManager?.user;
+        const view = document.getElementById('view-profile');
+        
+        if (!user) {
+            this.switchView('featured');
+            return;
+        }
+
+        const avatarPresets = [
+            { id: 'p1', class: 'bg-gradient-to-tr from-[#ff7ad9] to-[#8b5cf6]' },
+            { id: 'p2', class: 'bg-gradient-to-tr from-[#34d399] to-[#60a5fa]' },
+            { id: 'p3', class: 'bg-gradient-to-tr from-[#fb7185] to-[#facc15]' },
+            { id: 'p4', class: 'bg-gradient-to-tr from-[#38bdf8] to-[#6366f1]' },
+            { id: 'p5', class: 'bg-gradient-to-tr from-[#22c55e] to-[#f59e0b]' }
+        ];
+
+        view.innerHTML = `
+            <div class="max-w-3xl mx-auto space-y-8 pb-12">
+                <div>
+                     <p class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-primary/80 mb-2">Account Center</p>
+                    <h2 class="text-4xl font-900 mb-2">User Profile</h2>
+                    <p class="text-white/40 text-sm font-500 max-w-xl">Customize your identity and how you appear in the launcher.</p>
+                </div>
+
+                <div class="glass-panel p-8 rounded-[2rem] flex flex-col md:flex-row items-center gap-10">
+                    <div id="profile-avatar-trigger" class="relative group cursor-pointer w-40 h-40 shrink-0">
+                        <div id="profile-avatar-display" class="w-full h-full rounded-full bg-gradient-to-tr from-brand-primary to-brand-secondary flex items-center justify-center text-5xl font-800 text-white shadow-2xl shadow-brand-primary/30 border-4 border-white/10 overflow-hidden transition-all duration-300 group-hover:scale-[1.02] group-hover:border-brand-primary/40">
+                            ${user.avatar ? `<img src="${user.avatar}" class="w-full h-full object-cover">` : (user.username || 'P').charAt(0).toUpperCase()}
+                        </div>
+                        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm rounded-full flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300">
+                            <i data-lucide="camera" class="w-8 h-8 text-white mb-2"></i>
+                            <span class="text-[10px] font-900 uppercase tracking-widest text-white/80">Change Photo</span>
+                        </div>
+                        <input type="file" id="avatar-input" class="hidden" accept="image/*">
+                    </div>
+
+                    <div class="flex-1 space-y-6 w-full">
+                        <div class="space-y-4">
+                            <h4 class="text-xs font-900 uppercase tracking-[0.2em] text-white/30 px-1">Quick Presets</h4>
+                            <div class="flex flex-wrap gap-3">
+                                ${avatarPresets.map(preset => `
+                                    <button class="avatar-preset w-10 h-10 rounded-full ${preset.class} border-2 border-white/10 hover:scale-110 active:scale-95 transition-all shadow-lg hover:border-white/40 shadow-black/20" data-preset-id="${preset.id}"></button>
+                                `).join('')}
+                                <button id="avatar-upload-trigger" class="w-10 h-10 rounded-full bg-white/5 border-2 border-dashed border-white/20 flex items-center justify-center hover:bg-white/10 hover:border-brand-primary/40 transition-all group" title="Upload Custom">
+                                    <i data-lucide="plus" class="w-4 h-4 text-white/40 group-hover:text-brand-primary"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="space-y-2">
+                            <label class="text-[10px] font-800 uppercase tracking-widest text-white/30 px-1">Display Name</label>
+                            <div class="flex flex-col sm:flex-row gap-3">
+                                <input type="text" id="profile-username" value="${user.username || ''}" class="flex-1 bg-white/5 border border-white/10 rounded-2xl py-3.5 px-5 focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary/40 transition-all font-600 text-lg">
+                                <button id="save-profile-btn" class="bg-brand-primary hover:shadow-lg hover:shadow-brand-primary/40 px-8 py-3.5 rounded-2xl font-800 transition-all active:scale-95 shrink-0">
+                                    Save Changes
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="glass-panel p-7 rounded-3xl space-y-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-12 h-12 rounded-2xl bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center">
+                                <i data-lucide="shield-check" class="w-6 h-6 text-emerald-400"></i>
+                            </div>
+                            <h4 class="font-800 text-xl tracking-tight">Identity Verified</h4>
+                        </div>
+                        <p class="text-sm text-white/40 leading-relaxed font-500">Your local session is secure. In standalone mode, your profile data never leaves your browser, ensuring maximum privacy.</p>
+                    </div>
+
+                    <div class="glass-panel p-7 rounded-3xl space-y-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-12 h-12 rounded-2xl bg-brand-primary/10 border border-brand-primary/20 flex items-center justify-center">
+                                <i data-lucide="zap" class="w-6 h-6 text-brand-primary"></i>
+                            </div>
+                            <h4 class="font-800 text-xl tracking-tight">AETHER Connect</h4>
+                        </div>
+                        <p class="text-sm text-white/40 leading-relaxed font-500">Enable cloud features or link a wallet in future updates to share your library across different devices instantly.</p>
+                    </div>
+                </div>
+
+                <div class="pt-6 flex justify-center">
+                    <button id="profile-sign-out" class="flex items-center gap-2.5 px-8 py-4 rounded-2xl border border-red-500/20 bg-red-500/5 text-red-300 font-800 transition-all active:scale-95 hover:bg-red-500/10 hover:border-red-500/40">
+                        <i data-lucide="log-out" class="w-5 h-5"></i>
+                        Sign Out of Session
+                    </button>
+                </div>
+            </div>
+        `;
+
+        lucide.createIcons();
+        
+        const avatarInput = view.querySelector('#avatar-input');
+        const trigger = view.querySelector('#profile-avatar-trigger');
+        const uploadTrigger = view.querySelector('#avatar-upload-trigger');
+
+        const handleFile = (file) => {
+            if (!file || !file.type.startsWith('image/')) return;
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const dataUrl = e.target.result;
+                user.avatar = dataUrl;
+                authManager.saveSession();
+                authManager.updateUI();
+                this.renderProfile();
+                this.notify('Avatar Updated', 'Your custom profile photo has been set.', 'success');
+            };
+            reader.readAsDataURL(file);
+        };
+
+        trigger?.addEventListener('click', () => avatarInput?.click());
+        uploadTrigger?.addEventListener('click', () => avatarInput?.click());
+        avatarInput?.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+        view.querySelectorAll('.avatar-preset').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 128;
+                canvas.height = 128;
+                const ctx = canvas.getContext('2d');
+                
+                // Extract colors from preset class (emulate the gradient)
+                const presetId = btn.dataset.presetId;
+                const colors = {
+                    p1: ['#ff7ad9', '#8b5cf6'],
+                    p2: ['#34d399', '#60a5fa'],
+                    p3: ['#fb7185', '#facc15'],
+                    p4: ['#38bdf8', '#6366f1'],
+                    p5: ['#22c55e', '#f59e0b']
+                }[presetId] || ['#ff7ad9', '#8b5cf6'];
+
+                const grad = ctx.createLinearGradient(0, 0, 128, 128);
+                grad.addColorStop(0, colors[0]);
+                grad.addColorStop(1, colors[1]);
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, 128, 128);
+                
+                user.avatar = canvas.toDataURL('image/png');
+                authManager.saveSession();
+                authManager.updateUI();
+                this.renderProfile();
+                this.notify('Avatar Changed', 'Preset avatar applied successfully.', 'success');
+            });
+        });
+
+        const saveBtn = view.querySelector('#save-profile-btn');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => {
+                const newName = view.querySelector('#profile-username').value.trim();
+                if (newName && authManager) {
+                    authManager.user.username = newName;
+                    authManager.saveSession();
+                    authManager.updateUI();
+                    this.notify('Profile Updated', `You are now known as ${newName}.`, 'success');
+                    this.renderProfile();
+                }
+            });
+        }
+
+        const signOutBtn = view.querySelector('#profile-sign-out');
+        if (signOutBtn) {
+            signOutBtn.addEventListener('click', () => {
+                document.getElementById('sign-out-btn')?.click();
+            });
         }
     }
 }

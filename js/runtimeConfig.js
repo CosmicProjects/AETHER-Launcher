@@ -10,6 +10,6 @@ export function getAetherConfig() {
     return getConfigObject();
 }
 
-export function getPublicLibraryApiUrl(config = getConfigObject()) {
+export function readPublicLibraryApiUrl(config = getConfigObject()) {
     return String(config.publicLibraryApiUrl || '').trim().replace(/\/$/, '');
 }

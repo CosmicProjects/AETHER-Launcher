@@ -50,10 +50,6 @@ loadDotEnvFile(path.join(__dirname, '.env.local'));
 const PORT = 8080;
 const WATCH_DIR = './';
 const PUBLIC_LIBRARY_FILE = path.join(__dirname, 'data', 'public-library.json');
-const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
-const SUPABASE_READ_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '').trim();
-const SUPABASE_WRITE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
-const SUPABASE_PUBLIC_GAMES_TABLE = (process.env.SUPABASE_PUBLIC_GAMES_TABLE || 'public_games').trim() || 'public_games';
 const IGNORE_DIRS = [
     'node_modules', '.git', '.gemini', '.kilocode', 
     'build', 'dist', 'out', 'bin', 'obj', 'data',
@@ -177,21 +173,7 @@ function readPublicLibraryCache() {
     return normalizePublicLibrary(readJsonFile(PUBLIC_LIBRARY_FILE, { games: [] }));
 }
 
-function hasSupabaseReadAccess() {
-    return Boolean(SUPABASE_URL && SUPABASE_READ_KEY);
-}
 
-function hasSupabaseWriteAccess() {
-    return Boolean(SUPABASE_URL && SUPABASE_WRITE_KEY);
-}
-
-function getSupabaseHeaders(apiKey) {
-    return {
-        apikey: apiKey,
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-    };
-}
 
 function normalizePublicGameRecord(record) {
     const payload = record?.payload ?? record?.game ?? record;
@@ -225,97 +207,8 @@ function buildPublicGameRow(game, now = Date.now()) {
     };
 }
 
-async function fetchPublicLibraryFromSupabase() {
-    if (!hasSupabaseReadAccess()) {
-        return null;
-    }
-
-    const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/${encodeURIComponent(SUPABASE_PUBLIC_GAMES_TABLE)}?select=payload&order=public_updated_at.desc`,
-        {
-            cache: 'no-store',
-            headers: getSupabaseHeaders(SUPABASE_READ_KEY)
-        }
-    );
-
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-    }
-
-    const rows = await response.json();
-    if (!Array.isArray(rows)) {
-        throw new Error('Unexpected Supabase response shape');
-    }
-
-    return rows.map(normalizePublicGameRecord).filter(Boolean);
-}
-
-async function upsertPublicGameInSupabase(game) {
-    if (!hasSupabaseWriteAccess()) {
-        return null;
-    }
-
-    const row = buildPublicGameRow(game);
-    const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/${encodeURIComponent(SUPABASE_PUBLIC_GAMES_TABLE)}?on_conflict=id`,
-        {
-            method: 'POST',
-            headers: {
-                ...getSupabaseHeaders(SUPABASE_WRITE_KEY),
-                Prefer: 'resolution=merge-duplicates,return=representation'
-            },
-            body: JSON.stringify([row])
-        }
-    );
-
-    if (!response.ok) {
-        const errorBody = await response.text().catch(() => '');
-        throw new Error(errorBody || `HTTP ${response.status}`);
-    }
-
-    const rows = await response.json().catch(() => []);
-    return normalizePublicGameRecord(Array.isArray(rows) ? rows[0] : row);
-}
-
-async function removePublicGameFromSupabase(gameId) {
-    if (!hasSupabaseWriteAccess()) {
-        return false;
-    }
-
-    const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/${encodeURIComponent(SUPABASE_PUBLIC_GAMES_TABLE)}?id=eq.${encodeURIComponent(gameId)}`,
-        {
-            method: 'DELETE',
-            headers: getSupabaseHeaders(SUPABASE_WRITE_KEY)
-        }
-    );
-
-    if (!response.ok) {
-        const errorBody = await response.text().catch(() => '');
-        throw new Error(errorBody || `HTTP ${response.status}`);
-    }
-
-    return true;
-}
-
 async function readPublicLibrary() {
-    const cache = readPublicLibraryCache();
-
-    if (!hasSupabaseReadAccess()) {
-        return cache;
-    }
-
-    try {
-        const games = await fetchPublicLibraryFromSupabase();
-        if (!games) {
-            return cache;
-        }
-
-        return normalizePublicLibrary({ games });
-    } catch (err) {
-        console.warn(`[PUBLIC] Falling back to local cache: ${err.message}`);
-        return cache;
-    }
+    return readPublicLibraryCache();
 }
 
 async function savePublicLibrary(library) {
@@ -346,14 +239,7 @@ async function upsertPublicGame(game) {
 
     await savePublicLibrary({ games });
 
-    if (hasSupabaseWriteAccess()) {
-        try {
-            await upsertPublicGameInSupabase(publicGame);
-        } catch (err) {
-            console.warn(`[PUBLIC] Failed to sync "${publicGame.title || publicGame.id}" to Supabase: ${err.message}`);
-            throw err;
-        }
-    }
+
 
     return publicGame;
 }
@@ -366,14 +252,7 @@ async function removePublicGame(gameId) {
     if (filtered.length !== games.length) {
         await savePublicLibrary({ games: filtered });
 
-        if (hasSupabaseWriteAccess()) {
-            try {
-                await removePublicGameFromSupabase(gameId);
-            } catch (err) {
-                console.warn(`[PUBLIC] Failed to remove game ${gameId} from Supabase: ${err.message}`);
-                throw err;
-            }
-        }
+
 
         return true;
     }
