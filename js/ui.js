@@ -2389,6 +2389,7 @@ export class UIManager {
         if (progressFileCount) progressFileCount.textContent = `${totalFiles} file${totalFiles === 1 ? '' : 's'}`;
 
         try {
+            let publishedToCommunity = false;
             const result = await gameEngine.processFiles(fileArray, sourceName, ({ bytesProcessed, totalBytes: jobTotalBytes, filesProcessed, totalFiles: jobTotalFiles, currentFileName }) => {
                 const percent = jobTotalBytes > 0
                     ? Math.min(100, Math.round((bytesProcessed / jobTotalBytes) * 100))
@@ -2440,6 +2441,16 @@ export class UIManager {
 
             if (importedGame && importedGame.isPublic !== false) {
                 const published = await this.publishGameToPublicLibrary(importedGame);
+                publishedToCommunity = published;
+
+                if (published) {
+                    this.notify(
+                        'Published to Community',
+                        `"${importedGame.title}" is now visible in the community tab.`,
+                        'success'
+                    );
+                }
+
                 if (!published && this.canSyncPublicLibrary()) {
                     this.notify(
                         'Public sync unavailable',
@@ -2451,8 +2462,12 @@ export class UIManager {
             
             setTimeout(() => {
                 this.toggleImportModal(false);
-                if (this.currentView === 'storage') {
+                if (publishedToCommunity) {
+                    this.switchView('community');
+                } else if (this.currentView === 'storage') {
                     this.renderStorageManager();
+                } else if (this.currentView === 'community') {
+                    this.renderCommunity();
                 } else {
                     this.renderLibrary();
                 }
