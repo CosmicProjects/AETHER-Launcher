@@ -8,6 +8,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { exec } = require('child_process');
 
 function loadDotEnvFile(filePath) {
     try {
@@ -60,6 +61,30 @@ const IGNORE_DIRS = [
 let clients = [];
 let lastTriggerTime = 0;
 const DEBOUNCE_MS = 100;
+
+// Auto-push: debounce git commits so rapid saves only trigger one push
+let autoPushTimer = null;
+const AUTO_PUSH_DEBOUNCE_MS = 3000;
+
+function scheduleAutoPush() {
+    clearTimeout(autoPushTimer);
+    autoPushTimer = setTimeout(() => {
+        const ts = getTS();
+        const cmd = `git add data/public-library.json && git commit -m "auto: update game library" && git push`;
+        exec(cmd, { cwd: __dirname }, (err, stdout, stderr) => {
+            if (err) {
+                // "nothing to commit" is not a real error
+                if (stderr.includes('nothing to commit') || stdout.includes('nothing to commit')) {
+                    console.log(`${ts} [GIT] Library already up to date, no push needed.`);
+                } else {
+                    console.error(`${ts} [GIT] Auto-push failed: ${stderr || err.message}`);
+                }
+                return;
+            }
+            console.log(`${ts} [GIT] ✅ Library pushed to GitHub → site will update shortly.`);
+        });
+    }, AUTO_PUSH_DEBOUNCE_MS);
+}
 
 const MIME_TYPES = {
     '.html': 'text/html',
@@ -229,6 +254,7 @@ async function readPublicLibrary() {
 async function savePublicLibrary(library) {
     const normalized = normalizePublicLibrary(library);
     writeJsonFile(PUBLIC_LIBRARY_FILE, normalized);
+    scheduleAutoPush();
     return normalized;
 }
 
