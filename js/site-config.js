@@ -2,7 +2,7 @@ window.__AETHER_CONFIG__ = {
     publicLibraryApiUrl: '',
     publicLibraryReadUrl: './data/public-library.json',
     firebase: {
-        url: '' // paste your Firebase Realtime Database URL here
+        url: 'https://aether-launcher-db662-default-rtdb.firebaseio.com'
     },
     supabase: {
         url: '',
