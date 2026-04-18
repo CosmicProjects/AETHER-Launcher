@@ -439,7 +439,7 @@ export class GameEngine {
                     await storage.saveGame({ ...game, _tempMirror: true });
                 }
             }
-            return `./virtual-game/${encodeURIComponent(storage.dbName)}/${game.id}/${game.entryPoint}`;
+            return `./virtual-game/${encodeURIComponent(storage.dbName)}/${game.id}/${encodeURI(game.entryPoint)}`;
         }
 
         // Create Blob URLs for all files first so we can rewrite references
@@ -497,7 +497,7 @@ export class GameEngine {
         const entryExt = String(game.entryPoint || '').split('.').pop().toLowerCase();
         if (entryExt !== 'html' && entryExt !== 'htm') {
             // Non-HTML entry points still use the virtual filesystem path.
-            return `./virtual-game/${encodeURIComponent(storage.dbName)}/${game.id}/${game.entryPoint}`;
+            return `./virtual-game/${encodeURIComponent(storage.dbName)}/${game.id}/${encodeURI(game.entryPoint)}`;
         }
 
         const html = await entryBlob.text();
