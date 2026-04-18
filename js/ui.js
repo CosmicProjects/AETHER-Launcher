@@ -266,16 +266,20 @@ export class UIManager {
         }
     }
 
-
-
-
-
     getPublicLibraryApiUrl() {
         const config = getAetherConfig();
         const api = readPublicLibraryApiUrl(config);
+        const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+        const isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1';
         
+        // If the API URL points to localhost but we are NOT on localhost, ignore it
+        // This prevents CORS and Private Network Access errors on the live site
+        if (api && (api.includes('localhost') || api.includes('127.0.0.1')) && !isLocalHost) {
+            return null;
+        }
+
         // If no explicit API is set but we are on localhost, use the built-in dev server API
-        if (!api && (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))) {
+        if (!api && isLocalHost) {
             return '/api/public-library';
         }
         
