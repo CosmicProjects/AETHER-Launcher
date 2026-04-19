@@ -6,11 +6,13 @@ window.__AETHER_CONFIG__ = {
     ownerUsername: 'Cosmic',
     ownerPasswordHash: '2f2572d9616f2114e70bc8bf562797f175ee248bfb0dc7ef7b734024f5e06497',
     firebase: {
-        url: ''
-    },
-    supabase: {
-        url: 'https://uucymdzqrinsqxxkeppb.supabase.co',
-        anonKey: 'sb_publishable_VQth1HJgjgGjdfyaLBN-FA_91z-Ryl9',
-        table: 'public_library'
+        apiKey: 'AIzaSyCRZ4wmZhhCRJUwfgc70vRrnJCLGe-Qb3M',
+        authDomain: 'aether-launcher-db662.firebaseapp.com',
+        databaseURL: 'https://aether-launcher-db662-default-rtdb.firebaseio.com',
+        projectId: 'aether-launcher-db662',
+        storageBucket: 'aether-launcher-db662.firebasestorage.app',
+        messagingSenderId: '930293074733',
+        appId: '1:930293074733:web:6b45caafea5909982221a4',
+        measurementId: 'G-Q0XNS71Z67'
     }
 };

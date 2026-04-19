@@ -1,19 +1,31 @@
 import { ui } from './ui.js';
 import { storage } from './storage.js';
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import {
+    getAuth,
+    signInWithEmailAndPassword,
+    createUserWithEmailAndPassword,
+    onAuthStateChanged,
+    signOut,
+    updateProfile
+} from 'firebase/auth';
 
-function initSupabase() {
+function initFirebase() {
     const config = window.__AETHER_CONFIG__ || {};
-    const url = config.supabase?.url;
-    const key = config.supabase?.anonKey;
-    if (!url || !key) return null;
-    return createClient(url, key);
+    const fb = config.firebase || {};
+    if (!fb.apiKey || !fb.authDomain || !fb.projectId) return null;
+    try {
+        const app = getApps().length ? getApp() : initializeApp(fb);
+        return getAuth(app);
+    } catch {
+        return null;
+    }
 }
 
 export class AuthManager {
     constructor() {
         this.user = null;
-        this.supabase = initSupabase();
+        this.firebaseAuth = initFirebase();
         globalThis.__AETHER_AUTH__ = this;
         this.init();
     }
@@ -21,17 +33,10 @@ export class AuthManager {
     async init() {
         this.bindEvents();
 
-        if (this.supabase) {
-            const { data: { session } } = await this.supabase.auth.getSession();
-            if (session) {
-                await this._applySupabaseSession(session);
-            } else {
-                await this._loadLocalSession();
-            }
-
-            this.supabase.auth.onAuthStateChange(async (_event, session) => {
-                if (session) {
-                    await this._applySupabaseSession(session);
+        if (this.firebaseAuth) {
+            onAuthStateChanged(this.firebaseAuth, async (firebaseUser) => {
+                if (firebaseUser) {
+                    await this._applyFirebaseUser(firebaseUser);
                 } else if (!this.user?.guest) {
                     this.user = null;
                     this.updateUI();
@@ -39,15 +44,18 @@ export class AuthManager {
             });
         } else {
             await this._loadLocalSession();
+            this.updateUI();
         }
-
-        this.updateUI();
     }
 
-    async _applySupabaseSession(session) {
-        const username = session.user.user_metadata?.username || session.user.email?.split('@')[0] || 'Player';
-        const avatar = session.user.user_metadata?.avatar || null;
-        this.user = { username, displayName: username, email: session.user.email, id: session.user.id, ...(avatar ? { avatar } : {}) };
+    async _applyFirebaseUser(firebaseUser) {
+        const username = firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Player';
+        this.user = {
+            username,
+            displayName: username,
+            email: firebaseUser.email,
+            id: firebaseUser.uid
+        };
         await storage.switchUser(username);
         await this._saveLocalSession();
         this.updateUI();
@@ -77,7 +85,6 @@ export class AuthManager {
         } catch {}
     }
 
-    // Legacy alias used by ui.js
     async saveSession() { return this._saveLocalSession(); }
 
     updateUI() {
@@ -151,7 +158,7 @@ export class AuthManager {
 
     async setUser(userData) {
         if (!userData) {
-            if (this.supabase) await this.supabase.auth.signOut();
+            if (this.firebaseAuth) await signOut(this.firebaseAuth);
             this.user = null;
             await this._saveLocalSession();
             this.updateUI();
@@ -200,7 +207,7 @@ export class AuthManager {
         document.getElementById('guest-btn')?.addEventListener('click', () => this.startGuestSession());
 
         document.getElementById('sign-out-btn')?.addEventListener('click', async () => {
-            if (this.supabase && !this.user?.guest) await this.supabase.auth.signOut();
+            if (this.firebaseAuth) await signOut(this.firebaseAuth);
             this.user = null;
             localStorage.removeItem('aether_session');
             this.updateUI();
@@ -253,8 +260,6 @@ export class AuthManager {
             if (username.toLowerCase() === ownerUsername.toLowerCase()) {
                 const ok = await this._verifyOwnerPassword();
                 if (!ok) return this._showError(errorEl, 'Incorrect owner password.');
-
-                // Owner uses local auth, not Supabase
                 await this.setUser({ username, displayName: username });
                 this.closeModal();
                 ui.notify('Welcome, ' + username + '!', 'Signed in as owner.', 'success');
@@ -262,24 +267,21 @@ export class AuthManager {
                 return;
             }
 
-            if (!this.supabase) return this._showError(errorEl, 'Auth service unavailable. Try guest mode.');
+            if (!this.firebaseAuth) return this._showError(errorEl, 'Auth service unavailable. Try guest mode.');
 
             this._setLoading(btn, true, 'Create Account');
-            const { data, error } = await this.supabase.auth.signUp({
-                email, password,
-                options: { data: { username } }
-            });
-            this._setLoading(btn, false, 'Create Account');
-
-            if (error) return this._showError(errorEl, error.message);
-
-            if (data.session) {
-                await this._applySupabaseSession(data.session);
+            try {
+                const { user: firebaseUser } = await createUserWithEmailAndPassword(this.firebaseAuth, email, password);
+                await updateProfile(firebaseUser, { displayName: username });
+                await this._applyFirebaseUser({ ...firebaseUser, displayName: username });
                 this.closeModal();
                 ui.notify('Welcome, ' + username + '!', 'Account created successfully.', 'success');
                 ui.switchView('library');
-            } else {
-                this._showError(errorEl, 'Account created! Check your email to confirm, then sign in.', 'success');
+            } catch (err) {
+                const msg = this._firebaseErrorMessage(err.code);
+                this._showError(errorEl, msg);
+            } finally {
+                this._setLoading(btn, false, 'Create Account');
             }
         });
 
@@ -291,19 +293,46 @@ export class AuthManager {
             const btn = document.getElementById('signin-submit');
 
             if (!email || !password) return this._showError(errorEl, 'Email and password are required.');
-            if (!this.supabase) return this._showError(errorEl, 'Auth service unavailable.');
+            if (!this.firebaseAuth) return this._showError(errorEl, 'Auth service unavailable.');
 
             this._setLoading(btn, true, 'Sign In');
-            const { data, error } = await this.supabase.auth.signInWithPassword({ email, password });
-            this._setLoading(btn, false, 'Sign In');
-
-            if (error) return this._showError(errorEl, error.message);
-
-            await this._applySupabaseSession(data.session);
-            this.closeModal();
-            ui.notify('Welcome back, ' + this.user.displayName + '!', '', 'success');
-            ui.switchView('library');
+            try {
+                const { user: firebaseUser } = await signInWithEmailAndPassword(this.firebaseAuth, email, password);
+                await this._applyFirebaseUser(firebaseUser);
+                this.closeModal();
+                ui.notify('Welcome back, ' + this.user.displayName + '!', '', 'success');
+                ui.switchView('library');
+            } catch (err) {
+                const isNotFound = err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential';
+                if (isNotFound && errorEl) {
+                    errorEl.classList.remove('hidden', 'text-red-400', 'bg-red-500/10', 'text-emerald-400', 'bg-emerald-500/10');
+                    errorEl.classList.add('text-red-400', 'bg-red-500/10');
+                    errorEl.innerHTML = `Incorrect password, or no account found. <button id="switch-to-signup" class="underline text-white/80 hover:text-white">Sign up instead?</button>`;
+                    document.getElementById('switch-to-signup')?.addEventListener('click', () => {
+                        document.getElementById('tab-signup')?.click();
+                        document.getElementById('signup-email').value = email;
+                    });
+                } else {
+                    this._showError(errorEl, this._firebaseErrorMessage(err.code));
+                }
+            } finally {
+                this._setLoading(btn, false, 'Sign In');
+            }
         });
+    }
+
+    _firebaseErrorMessage(code) {
+        switch (code) {
+            case 'auth/email-already-in-use': return 'An account with this email already exists.';
+            case 'auth/invalid-email': return 'Invalid email address.';
+            case 'auth/weak-password': return 'Password must be at least 6 characters.';
+            case 'auth/user-not-found':
+            case 'auth/wrong-password':
+            case 'auth/invalid-credential': return 'Incorrect email or password.';
+            case 'auth/too-many-requests': return 'Too many attempts. Try again later.';
+            case 'auth/network-request-failed': return 'Network error. Check your connection.';
+            default: return 'Something went wrong. Please try again.';
+        }
     }
 }
 

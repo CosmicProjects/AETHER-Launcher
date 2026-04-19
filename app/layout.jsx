@@ -40,8 +40,16 @@ function readPublicLibraryApiUrl(config = {}) {
 }
 
 function readFirebaseConfig(config = {}) {
+    const fb = config.firebase && typeof config.firebase === 'object' ? config.firebase : {};
     return {
-        url: String(config.firebase?.url || config.firebaseUrl || '').trim().replace(/\/$/, '')
+        apiKey: String(fb.apiKey || '').trim(),
+        authDomain: String(fb.authDomain || '').trim(),
+        databaseURL: String(fb.databaseURL || '').trim(),
+        projectId: String(fb.projectId || '').trim(),
+        storageBucket: String(fb.storageBucket || '').trim(),
+        messagingSenderId: String(fb.messagingSenderId || '').trim(),
+        appId: String(fb.appId || '').trim(),
+        measurementId: String(fb.measurementId || '').trim(),
     };
 }
 
@@ -54,23 +62,6 @@ function readEnvFirst(...keys) {
     }
 
     return '';
-}
-
-function readSupabaseConfig() {
-    const url = readEnvFirst('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL').replace(/\/$/, '');
-    const anonKey = readEnvFirst(
-        'NEXT_PUBLIC_SUPABASE_ANON_KEY',
-        'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
-        'SUPABASE_ANON_KEY',
-        'SUPABASE_PUBLISHABLE_KEY'
-    );
-    const table = readEnvFirst('NEXT_PUBLIC_SUPABASE_TABLE', 'SUPABASE_TABLE') || 'public_library';
-
-    return {
-        url,
-        anonKey,
-        table
-    };
 }
 
 async function readFileLauncherConfig() {
@@ -89,25 +80,10 @@ async function readFileLauncherConfig() {
     }
 }
 
-function mergeSupabaseConfig(fileConfig, envConfig) {
-    const fileSupabase = fileConfig.supabase && typeof fileConfig.supabase === 'object'
-        ? fileConfig.supabase
-        : {};
-
-    return {
-        url: envConfig.url || String(fileSupabase.url || fileConfig.supabaseUrl || '').trim().replace(/\/$/, ''),
-        anonKey: envConfig.anonKey || String(fileSupabase.anonKey || fileConfig.supabaseAnonKey || '').trim(),
-        table: envConfig.table || String(fileSupabase.table || fileConfig.supabaseTable || 'public_library').trim() || 'public_library'
-    };
-}
-
 async function buildLauncherConfig() {
     const fileConfig = await readFileLauncherConfig();
-    const envSupabase = readSupabaseConfig();
-    const supabase = mergeSupabaseConfig(fileConfig, envSupabase);
     const envPublicLibraryReadUrl = readEnvFirst('NEXT_PUBLIC_PUBLIC_LIBRARY_READ_URL', 'PUBLIC_LIBRARY_READ_URL').replace(/\/$/, '');
     const envPublicLibraryApiUrl = readEnvFirst('NEXT_PUBLIC_PUBLIC_LIBRARY_API_URL', 'PUBLIC_LIBRARY_API_URL').replace(/\/$/, '');
-    const envFirebaseUrl = readEnvFirst('NEXT_PUBLIC_FIREBASE_URL', 'FIREBASE_URL').replace(/\/$/, '');
     const fileReadUrl = readPublicLibraryReadUrl(fileConfig);
     const fileApiUrl = readPublicLibraryApiUrl(fileConfig);
     const fileFirebase = readFirebaseConfig(fileConfig);
@@ -116,14 +92,7 @@ async function buildLauncherConfig() {
         ...fileConfig,
         publicLibraryApiUrl: envPublicLibraryApiUrl || fileApiUrl,
         publicLibraryReadUrl: envPublicLibraryReadUrl || fileReadUrl || './data/public-library.json',
-        firebase: {
-            ...fileFirebase,
-            url: envFirebaseUrl || fileFirebase.url
-        },
-        supabase,
-        supabaseUrl: supabase.url,
-        supabaseAnonKey: supabase.anonKey,
-        supabaseTable: supabase.table
+        firebase: fileFirebase,
     };
 }
 

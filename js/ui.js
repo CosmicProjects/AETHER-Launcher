@@ -9,7 +9,6 @@ import { env } from './envDetector.js';
 import { generateTitleArtwork } from './artwork.js';
 import {
     getAetherConfig,
-    getSupabasePublicLibraryConfig,
     readPublicLibraryApiUrl,
     readPublicLibraryReadUrl
 } from './runtimeConfig.js';
@@ -294,7 +293,7 @@ export class UIManager {
 
     getPublicLibraryFirebaseConfig() {
         const config = getAetherConfig();
-        const url = String(config.firebase?.url || config.firebaseUrl || '').trim().replace(/\/$/, '');
+        const url = String(config.firebase?.databaseURL || config.firebase?.url || config.firebaseUrl || '').trim().replace(/\/$/, '');
         return { configured: Boolean(url), url };
     }
 
@@ -307,11 +306,6 @@ export class UIManager {
         const firebaseConfig = this.getPublicLibraryFirebaseConfig();
         if (firebaseConfig.configured) {
             return { kind: 'firebase', ...firebaseConfig };
-        }
-
-        const supabaseConfig = this.getPublicLibrarySupabaseConfig();
-        if (supabaseConfig.configured) {
-            return { kind: 'supabase', ...supabaseConfig };
         }
 
         return null;
@@ -883,46 +877,6 @@ export class UIManager {
             : [];
     }
 
-    getPublicLibrarySupabaseConfig() {
-        return getSupabasePublicLibraryConfig(getAetherConfig());
-    }
-
-    async loadPublicLibraryFromSupabase() {
-        const config = this.getPublicLibrarySupabaseConfig();
-        if (!config.configured) {
-            return null;
-        }
-
-        try {
-            const response = await fetch(
-                `${config.supabaseUrl}/rest/v1/${encodeURIComponent(config.supabaseTable)}?select=payload&order=public_updated_at.desc`,
-                {
-                    cache: 'no-store',
-                    headers: {
-                        apikey: config.supabaseAnonKey,
-                        Authorization: `Bearer ${config.supabaseAnonKey}`
-                    }
-                }
-            );
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-
-            const rows = await response.json();
-            if (!Array.isArray(rows)) {
-                throw new Error('Unexpected Supabase response shape');
-            }
-
-            return rows
-                .map(row => row?.payload ?? row?.game ?? row)
-                .filter(game => game && typeof game === 'object');
-        } catch (err) {
-            console.warn('Unable to load public library from Supabase:', err);
-            return null;
-        }
-    }
-
     async loadPublicLibraryFromFirebase() {
         const config = this.getPublicLibraryFirebaseConfig();
         if (!config.configured) return null;
@@ -931,10 +885,21 @@ export class UIManager {
             const response = await fetch(`${config.url}/community_games.json`, { cache: 'no-store' });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
-            if (!data || typeof data !== 'object') return [];
-            return Object.values(data).filter(g => g && typeof g === 'object');
+            // null means the node doesn't exist yet — fall through to file source
+            if (!data || typeof data !== 'object') return null;
+            const games = Object.values(data).filter(g => g && typeof g === 'object');
+            return games.length > 0 ? games : null;
         } catch (err) {
             console.warn('Unable to load public library from Firebase:', err);
+            return null;
+        }
+    }
+
+    async _getFirebaseAuthToken() {
+        const firebaseAuth = globalThis.__AETHER_AUTH__?.firebaseAuth;
+        try {
+            return firebaseAuth?.currentUser ? await firebaseAuth.currentUser.getIdToken() : null;
+        } catch {
             return null;
         }
     }
@@ -943,9 +908,13 @@ export class UIManager {
         const config = this.getPublicLibraryFirebaseConfig();
         if (!config.configured) return false;
 
+        const token = await this._getFirebaseAuthToken();
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
         const response = await fetch(`${config.url}/community_games/${encodeURIComponent(payload.id)}.json`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify(payload)
         });
 
@@ -957,8 +926,13 @@ export class UIManager {
         const config = this.getPublicLibraryFirebaseConfig();
         if (!config.configured) return false;
 
+        const token = await this._getFirebaseAuthToken();
+        const headers = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
         const response = await fetch(`${config.url}/community_games/${encodeURIComponent(gameId)}.json`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers
         });
         return response.ok;
     }
@@ -1081,7 +1055,6 @@ export class UIManager {
 
         this.publicLibraryReady = (async () => {
             const apiUrl = this.getPublicLibraryApiUrl();
-            const supabaseConfig = this.getPublicLibrarySupabaseConfig();
             const readUrl = this.getPublicLibraryReadUrl();
             const sources = [];
 
@@ -1092,10 +1065,6 @@ export class UIManager {
             const firebaseConfig = this.getPublicLibraryFirebaseConfig();
             if (firebaseConfig.configured) {
                 sources.push({ kind: 'firebase' });
-            }
-
-            if (supabaseConfig.configured) {
-                sources.push({ kind: 'supabase' });
             }
 
             if (readUrl) {
@@ -1117,24 +1086,6 @@ export class UIManager {
                             if (hydrated) hydratedGames.push(hydrated);
                         }
                         this.publicLibrarySource = 'firebase';
-                        return this.setPublicGames(hydratedGames);
-                    }
-
-                    if (source.kind === 'supabase') {
-                        const supabaseGames = await this.loadPublicLibraryFromSupabase();
-                        if (supabaseGames === null) {
-                            continue;
-                        }
-
-                        const hydratedGames = [];
-                        for (const rawGame of supabaseGames || []) {
-                            const hydrated = await this.hydratePublicGame(rawGame);
-                            if (hydrated) {
-                                hydratedGames.push(hydrated);
-                            }
-                        }
-
-                        this.publicLibrarySource = source.kind;
                         return this.setPublicGames(hydratedGames);
                     }
 
@@ -1231,10 +1182,10 @@ export class UIManager {
         const combined = new Map();
         const currentUsername = globalThis.__AETHER_AUTH__?.user?.username;
 
-        // Automatically include games authored by the current user from the public catalog
+        // Include all public library games for every signed-in user
         if (currentUsername && currentUsername !== 'Guest') {
             for (const game of this.publicGames || []) {
-                if (game?.author === currentUsername) {
+                if (game?.id) {
                     combined.set(game.id, game);
                 }
             }
@@ -1282,34 +1233,6 @@ export class UIManager {
             } else if (syncTarget.kind === 'firebase') {
                 await this.publishGameToFirebase(payload);
                 publishedGame = await this.hydratePublicGame(payload);
-            } else if (syncTarget.kind === 'supabase') {
-                const response = await fetch(
-                    `${syncTarget.supabaseUrl}/rest/v1/${encodeURIComponent(syncTarget.supabaseTable)}?on_conflict=id`,
-                    {
-                        method: 'POST',
-                        headers: {
-                            apikey: syncTarget.supabaseAnonKey,
-                            Authorization: `Bearer ${syncTarget.supabaseAnonKey}`,
-                            'Content-Type': 'application/json',
-                            Prefer: 'resolution=merge-duplicates,return=representation'
-                        },
-                        body: JSON.stringify([{
-                            id: payload.id,
-                            payload,
-                            public_published_at: payload.publicPublishedAt || Date.now(),
-                            public_updated_at: payload.publicUpdatedAt || Date.now()
-                        }])
-                    }
-                );
-
-                if (!response.ok) {
-                    const errorText = await response.text().catch(() => '');
-                    throw new Error(errorText || `HTTP ${response.status}`);
-                }
-
-                const rows = await response.json().catch(() => []);
-                const rowPayload = rows?.[0]?.payload || payload;
-                publishedGame = await this.hydratePublicGame(rowPayload);
             }
 
             if (publishedGame) {
@@ -1355,23 +1278,6 @@ export class UIManager {
                 }
             } else if (syncTarget.kind === 'firebase') {
                 await this.removeGameFromFirebase(gameId);
-            } else if (syncTarget.kind === 'supabase') {
-                const response = await fetch(
-                    `${syncTarget.supabaseUrl}/rest/v1/${encodeURIComponent(syncTarget.supabaseTable)}?id=eq.${encodeURIComponent(gameId)}`,
-                    {
-                        method: 'DELETE',
-                        headers: {
-                            apikey: syncTarget.supabaseAnonKey,
-                            Authorization: `Bearer ${syncTarget.supabaseAnonKey}`,
-                            Prefer: 'return=minimal'
-                        }
-                    }
-                );
-
-                if (!response.ok) {
-                    const errorText = await response.text().catch(() => '');
-                    throw new Error(errorText || `HTTP ${response.status}`);
-                }
             }
 
             this.removePublicGameFromCache(gameId);
