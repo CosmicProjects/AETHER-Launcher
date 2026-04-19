@@ -321,6 +321,56 @@ export class UIManager {
         return Boolean(this.getPublicLibrarySyncTarget());
     }
 
+    // Subscription & play-time tracking
+    getSubscription() {
+        try {
+            const data = localStorage.getItem('aether_subscription');
+            return data ? JSON.parse(data) : { plan: 'free', activatedAt: null };
+        } catch { return { plan: 'free', activatedAt: null }; }
+    }
+
+    setSubscription(plan) {
+        localStorage.setItem('aether_subscription', JSON.stringify({ plan, activatedAt: Date.now() }));
+    }
+
+    getWeeklyUsage() {
+        try {
+            const data = localStorage.getItem('aether_weekly_usage');
+            const usage = data ? JSON.parse(data) : { weekStart: Date.now(), usedMs: 0 };
+            if (Date.now() - usage.weekStart >= 7 * 24 * 60 * 60 * 1000) {
+                const reset = { weekStart: Date.now(), usedMs: 0 };
+                localStorage.setItem('aether_weekly_usage', JSON.stringify(reset));
+                return reset;
+            }
+            return usage;
+        } catch { return { weekStart: Date.now(), usedMs: 0 }; }
+    }
+
+    addWeeklyUsage(ms) {
+        if (ms <= 0) return;
+        const usage = this.getWeeklyUsage();
+        usage.usedMs = (usage.usedMs || 0) + ms;
+        localStorage.setItem('aether_weekly_usage', JSON.stringify(usage));
+    }
+
+    getPlanLimitMs() {
+        return this.getSubscription().plan === 'gamer' ? 5 * 60 * 60 * 1000 : 60 * 60 * 1000;
+    }
+
+    getRemainingPlayMs() {
+        return Math.max(0, this.getPlanLimitMs() - (this.getWeeklyUsage().usedMs || 0));
+    }
+
+    formatPlayTime(ms) {
+        const totalSec = Math.floor(ms / 1000);
+        const h = Math.floor(totalSec / 3600);
+        const m = Math.floor((totalSec % 3600) / 60);
+        const s = totalSec % 60;
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+    }
+
     async syncLocalLibraryToPublicCatalog() {
         if (!env.status.isLocal || !this.canSyncPublicLibrary()) {
             return { synced: 0, skipped: 0 };
@@ -1953,6 +2003,7 @@ export class UIManager {
                     : 'Search your library...';
         }
 
+        if (normalizedView === 'plans') this.renderPlans();
         if (normalizedView === 'admin') this.renderAdmin();
         if (normalizedView === 'settings') this.renderSettings();
         if (normalizedView === 'updates') this.renderUpdates();
@@ -2653,6 +2704,13 @@ export class UIManager {
     async openGameWindow(gameId) {
         const game = await this.getGameForAction(gameId);
         if (!game) return;
+
+        const remainingMs = this.getRemainingPlayMs();
+        if (remainingMs <= 0) {
+            this.notify('Weekly limit reached', `Upgrade to Gamer plan for more play time.`, 'warning');
+            this.switchView('plans');
+            return;
+        }
         const isPublicMirror = this.isPublicMirrorGame(game);
         
         // If it's a public game being launched, ensure it's in the user's local library
@@ -2792,7 +2850,7 @@ export class UIManager {
             }
         });
 
-        this.activeWindows.push({ gameId, el: winEl, launchResult, isPublicMirror });
+        this.activeWindows.push({ gameId, el: winEl, launchResult, isPublicMirror, launchStartedAt: Date.now() });
 
         if (persistLaunchState) {
             // Update play count
@@ -2865,6 +2923,9 @@ export class UIManager {
         if (index !== -1) {
             const win = this.activeWindows[index];
             if (win.el.dataset.closing === 'true') return;
+            if (win.launchStartedAt) {
+                this.addWeeklyUsage(Date.now() - win.launchStartedAt);
+            }
             win.el.dataset.closing = 'true';
             if (win.isPublicMirror) {
                 storage.getGame(gameId).then(game => {
@@ -2894,6 +2955,106 @@ export class UIManager {
                 setTimeout(removeWindow, closeDelay);
             }
         }
+    }
+
+    renderPlans() {
+        const view = document.getElementById('view-plans');
+        if (!view) return;
+
+        const sub = this.getSubscription();
+        const usage = this.getWeeklyUsage();
+        const remaining = this.getRemainingPlayMs();
+        const limit = this.getPlanLimitMs();
+        const usedPct = Math.min(100, Math.round(((usage.usedMs || 0) / limit) * 100));
+        const weekResetMs = 7 * 24 * 60 * 60 * 1000 - (Date.now() - usage.weekStart);
+        const resetDays = Math.ceil(weekResetMs / (24 * 60 * 60 * 1000));
+
+        view.innerHTML = `
+            <div class="max-w-3xl mx-auto space-y-8">
+                <div>
+                    <h2 class="text-3xl md:text-4xl font-800 mb-2">Plans</h2>
+                    <p class="text-white/40 text-sm md:text-base font-500">Choose the plan that fits your playstyle. Usage resets every week.</p>
+                </div>
+
+                <div class="storage-card rounded-2xl p-5 space-y-3">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="text-[10px] font-800 uppercase tracking-[0.32em] text-white/25">This Week's Usage</div>
+                            <div class="text-lg font-800 mt-1">${this.formatPlayTime(usage.usedMs || 0)} <span class="text-white/30 font-500 text-sm">/ ${this.formatPlayTime(limit)}</span></div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-[10px] font-800 uppercase tracking-[0.32em] text-white/25">Resets in</div>
+                            <div class="text-lg font-800 mt-1">${resetDays} day${resetDays === 1 ? '' : 's'}</div>
+                        </div>
+                    </div>
+                    <div class="w-full bg-white/10 rounded-full h-2">
+                        <div class="h-2 rounded-full transition-all duration-500 ${usedPct >= 90 ? 'bg-red-500' : 'bg-brand-primary'}" style="width: ${usedPct}%"></div>
+                    </div>
+                    <div class="text-xs text-white/30">${this.formatPlayTime(remaining)} remaining this week</div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <!-- Free Plan -->
+                    <div class="storage-card rounded-3xl p-6 flex flex-col gap-5 ${sub.plan === 'free' ? 'ring-2 ring-white/20' : ''}">
+                        <div>
+                            <div class="text-[10px] font-800 uppercase tracking-[0.32em] text-white/25 mb-2">Free</div>
+                            <div class="text-3xl font-800">$0<span class="text-white/30 text-base font-500">/mo</span></div>
+                        </div>
+                        <ul class="space-y-2 flex-1">
+                            <li class="flex items-center gap-2 text-sm text-white/70"><i data-lucide="check" class="w-4 h-4 text-emerald-400 shrink-0"></i>1 hour play time per week</li>
+                            <li class="flex items-center gap-2 text-sm text-white/70"><i data-lucide="check" class="w-4 h-4 text-emerald-400 shrink-0"></i>Access to community games</li>
+                            <li class="flex items-center gap-2 text-sm text-white/70"><i data-lucide="check" class="w-4 h-4 text-emerald-400 shrink-0"></i>Upload games</li>
+                        </ul>
+                        <div class="px-4 py-2.5 rounded-xl text-center text-sm font-700 ${sub.plan === 'free' ? 'bg-white/10 text-white/50 cursor-default' : 'border border-white/15 text-white/60'}">
+                            ${sub.plan === 'free' ? 'Current Plan' : 'Free Plan'}
+                        </div>
+                    </div>
+
+                    <!-- Gamer Plan -->
+                    <div class="rounded-3xl p-6 flex flex-col gap-5 relative overflow-hidden ${sub.plan === 'gamer' ? 'ring-2 ring-brand-primary' : ''}" style="background: linear-gradient(135deg, rgb(var(--brand-primary-rgb)/0.15), rgb(var(--brand-accent-rgb)/0.08)); border: 1px solid rgb(var(--brand-primary-rgb)/0.3);">
+                        <div class="absolute top-4 right-4 px-2 py-0.5 rounded-full bg-brand-primary/20 text-brand-primary text-[10px] font-800 uppercase tracking-wider">Popular</div>
+                        <div>
+                            <div class="text-[10px] font-800 uppercase tracking-[0.32em] text-brand-primary/80 mb-2">Gamer</div>
+                            <div class="text-3xl font-800">$4.99<span class="text-white/30 text-base font-500">/mo</span></div>
+                        </div>
+                        <ul class="space-y-2 flex-1">
+                            <li class="flex items-center gap-2 text-sm text-white/70"><i data-lucide="check" class="w-4 h-4 text-brand-primary shrink-0"></i>5 hours play time per week</li>
+                            <li class="flex items-center gap-2 text-sm text-white/70"><i data-lucide="check" class="w-4 h-4 text-brand-primary shrink-0"></i>Access to community games</li>
+                            <li class="flex items-center gap-2 text-sm text-white/70"><i data-lucide="check" class="w-4 h-4 text-brand-primary shrink-0"></i>Upload games</li>
+                            <li class="flex items-center gap-2 text-sm text-white/70"><i data-lucide="check" class="w-4 h-4 text-brand-primary shrink-0"></i>Priority support</li>
+                        </ul>
+                        ${sub.plan === 'gamer' ? `
+                            <div class="px-4 py-2.5 rounded-xl text-center text-sm font-700 bg-brand-primary/20 text-brand-primary cursor-default">Current Plan</div>
+                            <button id="plans-downgrade" class="text-xs text-white/25 hover:text-white/50 transition-colors text-center">Downgrade to Free</button>
+                        ` : `
+                            <a id="plans-subscribe" href="#" target="_blank" class="block px-4 py-2.5 rounded-xl text-center text-sm font-700 bg-brand-primary hover:shadow-lg hover:shadow-brand-primary/30 text-white transition-all active:scale-95">Subscribe — $4.99/mo</a>
+                            <button id="plans-activate" class="text-xs text-white/30 hover:text-white/60 transition-colors text-center">Already subscribed? Activate here</button>
+                        `}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        lucide.createIcons();
+
+        view.querySelector('#plans-downgrade')?.addEventListener('click', () => {
+            if (confirm('Downgrade to Free plan? Your limit will drop to 1 hour per week.')) {
+                this.setSubscription('free');
+                this.renderPlans();
+                this.notify('Plan changed', 'Downgraded to Free plan.', 'info');
+            }
+        });
+
+        view.querySelector('#plans-activate')?.addEventListener('click', () => {
+            const code = prompt('Enter your activation code or type GAMER to activate:');
+            if (code?.trim().toUpperCase() === 'GAMER') {
+                this.setSubscription('gamer');
+                this.renderPlans();
+                this.notify('Gamer Plan activated!', 'You now have 5 hours of play time per week.', 'success');
+            } else if (code !== null) {
+                this.notify('Invalid code', 'Check your code and try again.', 'error');
+            }
+        });
     }
 
     /**
