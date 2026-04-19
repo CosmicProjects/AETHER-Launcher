@@ -3,6 +3,8 @@ window.__AETHER_CONFIG__ = {
     publicLibraryApiUrl: '',
     publicLibraryReadUrl: './data/public-library.json',
     stripeGamerPlanUrl: 'https://buy.stripe.com/test_fZu14g60w51db57bH78Ra00',
+    ownerUsername: 'Cosmic',
+    ownerPasswordHash: '2f2572d9616f2114e70bc8bf562797f175ee248bfb0dc7ef7b734024f5e06497',
     firebase: {
         url: ''
     },

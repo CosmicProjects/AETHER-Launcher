@@ -196,7 +196,24 @@ export class AuthManager {
             e.preventDefault();
             const usernameInput = document.getElementById('auth-username');
             const username = usernameInput?.value.trim() || 'Player';
-            
+
+            const config = window.__AETHER_CONFIG__ || {};
+            const ownerUsername = config.ownerUsername || 'Cosmic';
+
+            if (username.toLowerCase() === ownerUsername.toLowerCase()) {
+                const password = prompt(`"${ownerUsername}" is a protected account. Enter the password:`);
+                if (password === null) return;
+
+                const encoder = new TextEncoder();
+                const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(password));
+                const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+                if (hashHex !== config.ownerPasswordHash) {
+                    ui.notify('Access denied', 'Incorrect password for that username.', 'error');
+                    return;
+                }
+            }
+
             await this.setUser({ username, displayName: username });
             this.closeModal();
             ui.notify('Welcome', `Logged in as ${this.user?.displayName || username}`, 'success');
