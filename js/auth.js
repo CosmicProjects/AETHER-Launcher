@@ -3,6 +3,8 @@ import { storage } from './storage.js';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
     getAuth,
+    setPersistence,
+    browserLocalPersistence,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     onAuthStateChanged,
@@ -34,8 +36,13 @@ export class AuthManager {
         this.bindEvents();
 
         if (this.firebaseAuth) {
-            // Single listener handles both the initial session restore and future auth changes.
-            // We await it so nothing renders until Firebase has confirmed the auth state.
+            // Explicitly persist auth state in localStorage so it survives page refreshes
+            try { await setPersistence(this.firebaseAuth, browserLocalPersistence); } catch {}
+
+            // Show stored session immediately while Firebase verifies in the background
+            await this._loadLocalSession();
+            this.updateUI();
+
             await new Promise(resolve => {
                 let settled = false;
                 onAuthStateChanged(this.firebaseAuth, async (firebaseUser) => {
@@ -45,10 +52,14 @@ export class AuthManager {
                     } else if (!isFirst && !this.user?.guest) {
                         this.user = null;
                         this.updateUI();
+                    } else if (isFirst && !firebaseUser) {
+                        // Firebase confirmed no active session — clear local fallback
+                        this.user = null;
+                        localStorage.removeItem('aether_session');
+                        this.updateUI();
                     }
                     if (isFirst) {
                         settled = true;
-                        if (!firebaseUser) this.updateUI();
                         resolve();
                     }
                 });
