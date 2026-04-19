@@ -2173,8 +2173,12 @@ export class UIManager {
         grid.classList.remove('hidden');
         emptyState?.classList.add('hidden');
 
+        const currentUsername = globalThis.__AETHER_AUTH__?.user?.username;
+        const isOwner = currentUsername === 'Cosmic';
+
         grid.innerHTML = this.publicGames.map(game => this.createGameCard(game, {
-            isPublicMirror: true
+            isPublicMirror: true,
+            canDeleteFromCommunity: isOwner || (currentUsername && game.author === currentUsername)
         })).join('');
 
         lucide.createIcons();
@@ -2198,6 +2202,23 @@ export class UIManager {
                 addBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     this.addGameToLibrary(id);
+                });
+            }
+
+            const communityDeleteBtn = card.querySelector('.community-delete-btn');
+            if (communityDeleteBtn) {
+                communityDeleteBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const game = this.publicGames.find(g => g.id === id);
+                    if (!game) return;
+                    if (!confirm(`Remove "${game.title}" from the community?`)) return;
+                    const removed = await this.removeGameFromPublicLibrary(id);
+                    if (removed) {
+                        this.notify('Removed', `"${game.title}" was removed from the community.`, 'info');
+                        this.renderCommunity();
+                    } else {
+                        this.notify('Error', 'Could not remove the game. Try again.', 'error');
+                    }
                 });
             }
 
@@ -2281,7 +2302,11 @@ export class UIManager {
                             </div>
                             <div class="game-card-monogram">${titleInitial}</div>
                         </div>
-                        ${isPublicMirror ? '' : `
+                        ${isPublicMirror ? (context.canDeleteFromCommunity ? `
+                            <button class="community-delete-btn absolute top-14 right-3 p-2 bg-black/40 backdrop-blur-md rounded-lg text-white/60 hover:text-red-500 transition-all z-20 active:scale-90" title="Remove from Community">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                        ` : '') : `
                             <button class="delete-btn absolute top-14 right-3 p-2 bg-black/40 backdrop-blur-md rounded-lg text-white/60 hover:text-red-500 transition-all z-20 active:scale-90" title="Remove Game">
                                 <i data-lucide="trash-2" class="w-4 h-4"></i>
                             </button>
