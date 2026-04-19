@@ -1931,7 +1931,7 @@ export class UIManager {
         });
 
         // Toggle Views
-        const targetViewId = this.libraryViewNames.has(normalizedView) ? 'library' : normalizedView;
+        const targetViewId = (this.libraryViewNames.has(normalizedView) && normalizedView !== 'community') ? 'library' : normalizedView;
         document.querySelectorAll('.view').forEach(view => {
             view.classList.toggle('hidden', view.id !== `view-${targetViewId}`);
         });
