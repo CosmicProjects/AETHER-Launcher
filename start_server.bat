@@ -1,7 +1,7 @@
 @echo off
 setlocal
 title AETHER Launcher Server
-set PORT=8080
+set PORT=3000
 
 echo ======================================================
 echo    🚀 AETHER PRO GAME HUB - HIGH-FIDELITY DEV
@@ -11,11 +11,11 @@ echo.
 :: 1. Check for Custom Node.js Dev Server (Top Priority: Hot Reload)
 where node >nul 2>nul
 if %ERRORLEVEL% equ 0 (
-    if exist "server.js" (
-        echo [SYSTEM] Detected Custom AETHER Dev Server with Hot-Reload.
-        echo [ACTION] Initializing Dev Monitoring on port %PORT%...
+    if exist "package.json" (
+        echo [SYSTEM] Detected Next.js launcher.
+        echo [ACTION] Starting Next.js dev server...
         start http://localhost:%PORT%
-        node server.js
+        npm run dev
         goto :eof
     )
 )

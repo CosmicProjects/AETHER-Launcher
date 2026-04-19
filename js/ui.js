@@ -3456,11 +3456,26 @@ export class UIManager {
         const notificationPermission = 'Notification' in window ? Notification.permission : 'unsupported';
         const recoveryGameTitle = this.pendingRecoverySession?.title || 'None';
         const activeTheme = this.getTheme();
-        const catalogModeLabel = this.canSyncPublicLibrary() ? 'Shared API' : 'Standalone Mode';
-        const catalogPanelTitle = this.canSyncPublicLibrary() ? 'Shared Catalog' : 'Local Site Data';
-        const catalogPanelCopy = this.canSyncPublicLibrary()
-            ? 'Public games load from the shared API first. The JSON file remains a fallback for static/offline hosting.'
-            : 'Public games load from local data and the configured development server. The local JSON cache remains the primary source for the static site.';
+        const syncTarget = this.getPublicLibrarySyncTarget();
+        const catalogModeLabel = syncTarget?.kind === 'supabase'
+            ? 'Supabase'
+            : syncTarget?.kind === 'firebase'
+                ? 'Firebase'
+                : syncTarget?.kind === 'api'
+                    ? 'Shared API'
+                    : 'Standalone Mode';
+        const catalogPanelTitle = syncTarget?.kind === 'supabase'
+            ? 'Supabase Catalog'
+            : syncTarget
+                ? 'Shared Catalog'
+                : 'Local Site Data';
+        const catalogPanelCopy = syncTarget?.kind === 'supabase'
+            ? 'Public games load from Supabase when configured. The JSON cache remains a fallback for static or offline hosting.'
+            : syncTarget?.kind === 'firebase'
+                ? 'Public games load from Firebase when configured. The JSON cache remains a fallback for static or offline hosting.'
+                : syncTarget?.kind === 'api'
+                    ? 'Public games load from the shared API first. The JSON cache remains a fallback for static or offline hosting.'
+                    : 'Public games load from local data and the configured development server. The local JSON cache remains the primary source for the static site.';
         view.innerHTML = `
             <div class="max-w-3xl mx-auto space-y-8">
                 <div class="flex items-start justify-between gap-4">

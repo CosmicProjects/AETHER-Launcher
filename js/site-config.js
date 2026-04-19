@@ -1,5 +1,6 @@
 window.__AETHER_CONFIG__ = {
-    publicLibraryApiUrl: '/api/public-library',
+    // Next.js reads this file at build time as a fallback source of truth.
+    publicLibraryApiUrl: '',
     publicLibraryReadUrl: './data/public-library.json',
     firebase: {
         url: ''

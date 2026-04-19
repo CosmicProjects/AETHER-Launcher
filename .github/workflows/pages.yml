@@ -25,10 +25,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Build site
-
-        run: node scripts/build-site.mjs
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_SUPABASE_TABLE: ${{ vars.NEXT_PUBLIC_SUPABASE_TABLE }}
+        run: npm run build
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -36,7 +43,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: "./site"
+          path: "./out"
 
   deploy:
     environment:
