@@ -2088,7 +2088,6 @@ export class UIManager {
         const emptyStateCopy = document.getElementById('empty-state-copy');
         const titleEl = document.getElementById('view-library-title');
         const descEl = document.getElementById('view-library-desc');
-        const sortFilter = document.getElementById('sort-filter');
         const emptyStateAction = document.getElementById('empty-state-action');
         if (!grid) return;
 
@@ -3027,7 +3026,7 @@ export class UIManager {
                             <div class="px-4 py-2.5 rounded-xl text-center text-sm font-700 bg-brand-primary/20 text-brand-primary cursor-default">Current Plan</div>
                             <button id="plans-downgrade" class="text-xs text-white/25 hover:text-white/50 transition-colors text-center">Downgrade to Free</button>
                         ` : `
-                            <a id="plans-subscribe" href="#" target="_blank" class="block px-4 py-2.5 rounded-xl text-center text-sm font-700 bg-brand-primary hover:shadow-lg hover:shadow-brand-primary/30 text-white transition-all active:scale-95">Subscribe — $4.99/mo</a>
+                            <button id="plans-subscribe" class="block w-full px-4 py-2.5 rounded-xl text-center text-sm font-700 bg-brand-primary hover:shadow-lg hover:shadow-brand-primary/30 text-white transition-all active:scale-95">Subscribe — $4.99/mo</button>
                             <button id="plans-activate" class="text-xs text-white/30 hover:text-white/60 transition-colors text-center">Already subscribed? Activate here</button>
                         `}
                     </div>
@@ -3036,6 +3035,16 @@ export class UIManager {
         `;
 
         lucide.createIcons();
+
+        view.querySelector('#plans-subscribe')?.addEventListener('click', () => {
+            const stripeUrl = (getAetherConfig().stripeGamerPlanUrl || '').trim();
+            if (!stripeUrl) {
+                this.notify('Unavailable', 'Payment is not configured yet.', 'error');
+                return;
+            }
+            window.open(stripeUrl, '_blank', 'noopener');
+            this.notify('Checkout opened', 'Complete payment in the new tab, then click "Already subscribed? Activate here".', 'info');
+        });
 
         view.querySelector('#plans-downgrade')?.addEventListener('click', () => {
             if (confirm('Downgrade to Free plan? Your limit will drop to 1 hour per week.')) {
@@ -3046,13 +3055,11 @@ export class UIManager {
         });
 
         view.querySelector('#plans-activate')?.addEventListener('click', () => {
-            const code = prompt('Enter your activation code or type GAMER to activate:');
-            if (code?.trim().toUpperCase() === 'GAMER') {
+            const code = prompt('Enter your activation code or click OK after completing payment:');
+            if (code !== null) {
                 this.setSubscription('gamer');
                 this.renderPlans();
                 this.notify('Gamer Plan activated!', 'You now have 5 hours of play time per week.', 'success');
-            } else if (code !== null) {
-                this.notify('Invalid code', 'Check your code and try again.', 'error');
             }
         });
     }

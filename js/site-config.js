@@ -2,6 +2,7 @@ window.__AETHER_CONFIG__ = {
     // Next.js reads this file at build time as a fallback source of truth.
     publicLibraryApiUrl: '',
     publicLibraryReadUrl: './data/public-library.json',
+    stripeGamerPlanUrl: 'https://buy.stripe.com/test_fZu14g60w51db57bH78Ra00',
     firebase: {
         url: ''
     },
