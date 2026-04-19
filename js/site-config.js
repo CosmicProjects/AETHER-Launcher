@@ -6,8 +6,8 @@ window.__AETHER_CONFIG__ = {
         url: ''
     },
     supabase: {
-        url: '',
-        anonKey: '',
+        url: 'https://uucymdzqrinsqxxkeppb.supabase.co',
+        anonKey: 'sb_publishable_VQth1HJgjgGjdfyaLBN-FA_91z-Ryl9',
         table: 'public_library'
     }
 };
