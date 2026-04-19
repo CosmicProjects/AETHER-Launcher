@@ -2704,11 +2704,15 @@ export class UIManager {
         const game = await this.getGameForAction(gameId);
         if (!game) return;
 
-        const remainingMs = this.getRemainingPlayMs();
-        if (remainingMs <= 0) {
-            this.notify('Weekly limit reached', `Upgrade to Gamer plan for more play time.`, 'warning');
-            this.switchView('plans');
-            return;
+        const currentUsername = globalThis.__AETHER_AUTH__?.user?.username;
+        const isOwner = currentUsername === 'Cosmic';
+        if (!isOwner) {
+            const remainingMs = this.getRemainingPlayMs();
+            if (remainingMs <= 0) {
+                this.notify('Weekly limit reached', 'Upgrade to Gamer plan for more play time.', 'warning');
+                this.switchView('plans');
+                return;
+            }
         }
         const isPublicMirror = this.isPublicMirrorGame(game);
         
@@ -3050,6 +3054,7 @@ export class UIManager {
             if (confirm('Downgrade to Free plan? Your limit will drop to 1 hour per week.')) {
                 this.setSubscription('free');
                 this.renderPlans();
+                globalThis.__AETHER_AUTH__?.updateUI();
                 this.notify('Plan changed', 'Downgraded to Free plan.', 'info');
             }
         });
@@ -3059,6 +3064,7 @@ export class UIManager {
             if (code !== null) {
                 this.setSubscription('gamer');
                 this.renderPlans();
+                globalThis.__AETHER_AUTH__?.updateUI();
                 this.notify('Gamer Plan activated!', 'You now have 5 hours of play time per week.', 'success');
             }
         });

@@ -70,19 +70,43 @@ export class AuthManager {
         if (this.user) {
             const isGuest = this.user.guest === true;
             const displayName = this.user.displayName || this.user.username || (isGuest ? 'Guest' : 'Player');
+            const isOwner = this.user.username === 'Cosmic';
+            const isGamer = !isGuest && (() => {
+                try {
+                    const sub = JSON.parse(localStorage.getItem('aether_subscription') || '{}');
+                    return sub.plan === 'gamer';
+                } catch { return false; }
+            })();
+
             authBtn?.classList.add('hidden');
             userProfile?.classList.remove('hidden');
             userProfile?.classList.add('flex');
-            
+
             if (userName) userName.textContent = displayName;
-            if (cloudStatus) cloudStatus.textContent = isGuest ? 'Guest Session' : 'Cloud Sync Active';
-            
-            if (userAvatar) {
-                if (this.user.avatar) {
-                    userAvatar.innerHTML = `<img src="${this.user.avatar}" class="w-full h-full object-cover rounded-full">`;
+            if (cloudStatus) {
+                if (isOwner) {
+                    cloudStatus.textContent = 'Owner';
+                    cloudStatus.style.color = 'rgb(var(--brand-primary-rgb))';
+                } else if (isGamer) {
+                    cloudStatus.textContent = 'Gamer Plan';
+                    cloudStatus.style.color = 'rgb(var(--brand-accent-rgb, 168 85 247))';
                 } else {
-                    userAvatar.innerHTML = displayName.charAt(0).toUpperCase();
+                    cloudStatus.textContent = isGuest ? 'Guest Session' : 'Free Plan';
+                    cloudStatus.style.color = '';
                 }
+            }
+
+            if (userAvatar) {
+                const avatarContent = this.user.avatar
+                    ? `<img src="${this.user.avatar}" class="w-full h-full object-cover rounded-full">`
+                    : displayName.charAt(0).toUpperCase();
+                const badge = isOwner
+                    ? `<span class="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-brand-primary flex items-center justify-center text-white" style="font-size:8px;font-weight:800;">★</span>`
+                    : isGamer
+                        ? `<span class="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-purple-500 flex items-center justify-center text-white" style="font-size:8px;font-weight:800;">G</span>`
+                        : '';
+                userAvatar.style.position = 'relative';
+                userAvatar.innerHTML = avatarContent + badge;
             }
         } else {
             authBtn?.classList.remove('hidden');
