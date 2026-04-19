@@ -44,10 +44,21 @@ function readFirebaseConfig(config = {}) {
     };
 }
 
+function readEnvFirst(...keys) {
+    for (const key of keys) {
+        const value = process.env[key];
+        if (typeof value === 'string' && value.trim()) {
+            return value.trim();
+        }
+    }
+
+    return '';
+}
+
 function readSupabaseConfig() {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim().replace(/\/$/, '') || '';
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || '';
-    const table = process.env.NEXT_PUBLIC_SUPABASE_TABLE?.trim() || 'public_library';
+    const url = readEnvFirst('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL').replace(/\/$/, '');
+    const anonKey = readEnvFirst('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
+    const table = readEnvFirst('NEXT_PUBLIC_SUPABASE_TABLE', 'SUPABASE_TABLE') || 'public_library';
 
     return {
         url,
@@ -88,9 +99,9 @@ async function buildLauncherConfig() {
     const fileConfig = await readFileLauncherConfig();
     const envSupabase = readSupabaseConfig();
     const supabase = mergeSupabaseConfig(fileConfig, envSupabase);
-    const envPublicLibraryReadUrl = process.env.NEXT_PUBLIC_PUBLIC_LIBRARY_READ_URL?.trim().replace(/\/$/, '') || '';
-    const envPublicLibraryApiUrl = process.env.NEXT_PUBLIC_PUBLIC_LIBRARY_API_URL?.trim().replace(/\/$/, '') || '';
-    const envFirebaseUrl = process.env.NEXT_PUBLIC_FIREBASE_URL?.trim().replace(/\/$/, '') || '';
+    const envPublicLibraryReadUrl = readEnvFirst('NEXT_PUBLIC_PUBLIC_LIBRARY_READ_URL', 'PUBLIC_LIBRARY_READ_URL').replace(/\/$/, '');
+    const envPublicLibraryApiUrl = readEnvFirst('NEXT_PUBLIC_PUBLIC_LIBRARY_API_URL', 'PUBLIC_LIBRARY_API_URL').replace(/\/$/, '');
+    const envFirebaseUrl = readEnvFirst('NEXT_PUBLIC_FIREBASE_URL', 'FIREBASE_URL').replace(/\/$/, '');
     const fileReadUrl = readPublicLibraryReadUrl(fileConfig);
     const fileApiUrl = readPublicLibraryApiUrl(fileConfig);
     const fileFirebase = readFirebaseConfig(fileConfig);
