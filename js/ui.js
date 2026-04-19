@@ -3456,6 +3456,11 @@ export class UIManager {
         const notificationPermission = 'Notification' in window ? Notification.permission : 'unsupported';
         const recoveryGameTitle = this.pendingRecoverySession?.title || 'None';
         const activeTheme = this.getTheme();
+        const catalogModeLabel = this.canSyncPublicLibrary() ? 'Shared API' : 'Standalone Mode';
+        const catalogPanelTitle = this.canSyncPublicLibrary() ? 'Shared Catalog' : 'Local Site Data';
+        const catalogPanelCopy = this.canSyncPublicLibrary()
+            ? 'Public games load from the shared API first. The JSON file remains a fallback for static/offline hosting.'
+            : 'Public games load from local data and the configured development server. The local JSON cache remains the primary source for the static site.';
         view.innerHTML = `
             <div class="max-w-3xl mx-auto space-y-8">
                 <div class="flex items-start justify-between gap-4">
@@ -3489,12 +3494,12 @@ export class UIManager {
                 <div class="glass-panel p-6 rounded-2xl flex items-center justify-between gap-6">
                     <div>
                         <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-white/30 mb-2">Public Catalog</div>
-                        <div class="font-700 text-lg mb-1">Local Site Data</div>
-                        <p class="text-white/40 text-sm">Public games load from local data and the configured development server. The local JSON cache remains the primary source for the static site.</p>
+                        <div class="font-700 text-lg mb-1">${catalogPanelTitle}</div>
+                        <p class="text-white/40 text-sm">${catalogPanelCopy}</p>
                     </div>
                     <div class="flex flex-col items-end gap-2">
                         <div class="px-3 py-1 rounded-full border border-white/10 bg-white/5 text-white/50 text-xs font-700">
-                             Standalone Mode
+                             ${catalogModeLabel}
                         </div>
                     </div>
                 </div>

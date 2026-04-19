@@ -107,6 +107,9 @@ const PUBLIC_LIBRARY_CORS_HEADERS = {
 function sendJsonResponse(res, statusCode, payload) {
     res.writeHead(statusCode, {
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
         ...PUBLIC_LIBRARY_CORS_HEADERS
     });
     res.end(JSON.stringify(payload));
