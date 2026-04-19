@@ -28,8 +28,9 @@ export class AuthManager {
     constructor() {
         this.user = null;
         this.firebaseAuth = initFirebase();
+        this._firebaseUserSeen = false;
         globalThis.__AETHER_AUTH__ = this;
-        this.init();
+        this.ready = this.init();
     }
 
     async init() {
@@ -47,10 +48,19 @@ export class AuthManager {
                 let settled = false;
                 onAuthStateChanged(this.firebaseAuth, async (firebaseUser) => {
                     const isFirst = !settled;
+                    if (isFirst && !firebaseUser) {
+                        // Keep the loaded local fallback until Firebase restores a user.
+                        settled = true;
+                        resolve();
+                        return;
+                    }
                     if (firebaseUser) {
+                        this._firebaseUserSeen = true;
                         await this._applyFirebaseUser(firebaseUser);
-                    } else if (!isFirst && !this.user?.guest) {
+                    } else if (!isFirst && this._firebaseUserSeen && !this.user?.guest) {
                         this.user = null;
+                        await storage.switchUser(null);
+                        localStorage.removeItem('aether_session');
                         this.updateUI();
                     } else if (isFirst && !firebaseUser) {
                         // Firebase confirmed no active session — clear local fallback

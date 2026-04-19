@@ -26,6 +26,9 @@ async function initAether() {
             console.error('CRITICAL: AETHER Filesystem Registration Failed:', error);
         }
     }
+
+    await auth.ready;
+
     // Cleanup: Remove demo games if they exist
     const demoIds = ['demo-1', 'demo-2'];
     for (const id of demoIds) {
