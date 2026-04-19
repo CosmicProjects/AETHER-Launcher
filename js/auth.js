@@ -34,6 +34,17 @@ export class AuthManager {
         this.bindEvents();
 
         if (this.firebaseAuth) {
+            // Wait for Firebase to complete its initial session check before touching the UI
+            const initialUser = await new Promise(resolve => {
+                const unsub = onAuthStateChanged(this.firebaseAuth, user => { unsub(); resolve(user); });
+            });
+
+            if (initialUser) {
+                await this._applyFirebaseUser(initialUser);
+            }
+            this.updateUI();
+
+            // Listen for subsequent sign-in / sign-out events
             onAuthStateChanged(this.firebaseAuth, async (firebaseUser) => {
                 if (firebaseUser) {
                     await this._applyFirebaseUser(firebaseUser);
