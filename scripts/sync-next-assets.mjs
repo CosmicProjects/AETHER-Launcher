@@ -6,7 +6,6 @@ const publicDir = path.join(rootDir, 'public');
 const copyTargets = [
     'assets',
     'data',
-    'js',
     'favicon-32.png',
     'favicon.svg',
     'styles.css',

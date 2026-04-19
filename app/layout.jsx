@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import vm from 'node:vm';
+import LauncherClient from './launcher-client';
 
 const tailwindThemeConfig = {
     darkMode: 'class',
@@ -57,7 +58,12 @@ function readEnvFirst(...keys) {
 
 function readSupabaseConfig() {
     const url = readEnvFirst('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL').replace(/\/$/, '');
-    const anonKey = readEnvFirst('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
+    const anonKey = readEnvFirst(
+        'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+        'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY',
+        'SUPABASE_ANON_KEY',
+        'SUPABASE_PUBLISHABLE_KEY'
+    );
     const table = readEnvFirst('NEXT_PUBLIC_SUPABASE_TABLE', 'SUPABASE_TABLE') || 'public_library';
 
     return {
@@ -143,15 +149,15 @@ export default async function RootLayout({ children }) {
                 />
                 <script src="https://unpkg.com/lucide@latest"></script>
             </head>
-            <body className="bg-brand-bg text-[#f0f0f5] font-['Plus_Jakarta_Sans'] overflow-hidden selection:bg-brand-primary selection:text-white">
-                {children}
-                <script
-                    dangerouslySetInnerHTML={{
-                        __html: `window.__AETHER_CONFIG__ = ${escapeInlineScript(config)};`
-                    }}
-                />
-                <script type="module" src="js/main.js?v=20260418a"></script>
-            </body>
-        </html>
-    );
+                <body className="bg-brand-bg text-[#f0f0f5] font-['Plus_Jakarta_Sans'] overflow-hidden selection:bg-brand-primary selection:text-white">
+                    {children}
+                    <script
+                        dangerouslySetInnerHTML={{
+                            __html: `window.__AETHER_CONFIG__ = ${escapeInlineScript(config)};`
+                        }}
+                    />
+                    <LauncherClient />
+                </body>
+            </html>
+        );
 }
