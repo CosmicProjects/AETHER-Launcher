@@ -277,11 +277,6 @@ export class UIManager {
             return null;
         }
 
-        // If no explicit API is set but we are on localhost, use the built-in dev server API
-        if (!api && isLocalHost) {
-            return '/api/public-library';
-        }
-        
         return api;
     }
 
