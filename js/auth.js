@@ -34,24 +34,24 @@ export class AuthManager {
         this.bindEvents();
 
         if (this.firebaseAuth) {
-            // Wait for Firebase to complete its initial session check before touching the UI
-            const initialUser = await new Promise(resolve => {
-                const unsub = onAuthStateChanged(this.firebaseAuth, user => { unsub(); resolve(user); });
-            });
-
-            if (initialUser) {
-                await this._applyFirebaseUser(initialUser);
-            }
-            this.updateUI();
-
-            // Listen for subsequent sign-in / sign-out events
-            onAuthStateChanged(this.firebaseAuth, async (firebaseUser) => {
-                if (firebaseUser) {
-                    await this._applyFirebaseUser(firebaseUser);
-                } else if (!this.user?.guest) {
-                    this.user = null;
-                    this.updateUI();
-                }
+            // Single listener handles both the initial session restore and future auth changes.
+            // We await it so nothing renders until Firebase has confirmed the auth state.
+            await new Promise(resolve => {
+                let settled = false;
+                onAuthStateChanged(this.firebaseAuth, async (firebaseUser) => {
+                    const isFirst = !settled;
+                    if (firebaseUser) {
+                        await this._applyFirebaseUser(firebaseUser);
+                    } else if (!isFirst && !this.user?.guest) {
+                        this.user = null;
+                        this.updateUI();
+                    }
+                    if (isFirst) {
+                        settled = true;
+                        if (!firebaseUser) this.updateUI();
+                        resolve();
+                    }
+                });
             });
         } else {
             await this._loadLocalSession();
