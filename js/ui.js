@@ -877,7 +877,10 @@ export class UIManager {
         if (!config.configured) return null;
 
         try {
-            const response = await fetch(`${config.url}/community_games.json`, { cache: 'no-store' });
+            const requestUrl = await this._buildFirebaseRestUrl('community_games.json');
+            if (!requestUrl) return null;
+
+            const response = await fetch(requestUrl, { cache: 'no-store' });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             // null means the node doesn't exist yet — fall through to file source
@@ -891,7 +894,10 @@ export class UIManager {
     }
 
     async _getFirebaseAuthToken() {
-        const firebaseAuth = globalThis.__AETHER_AUTH__?.firebaseAuth;
+        const authManager = globalThis.__AETHER_AUTH__;
+        // Wait for the auth manager to finish its initial session check
+        try { if (authManager?.ready) await authManager.ready; } catch {}
+        const firebaseAuth = authManager?.firebaseAuth;
         try {
             return firebaseAuth?.currentUser ? await firebaseAuth.currentUser.getIdToken() : null;
         } catch {
@@ -899,17 +905,29 @@ export class UIManager {
         }
     }
 
+    async _buildFirebaseRestUrl(pathSuffix) {
+        const config = this.getPublicLibraryFirebaseConfig();
+        if (!config.configured) return null;
+
+        const requestUrl = new URL(`${config.url}/${String(pathSuffix || '').replace(/^\/+/, '')}`);
+        const token = await this._getFirebaseAuthToken();
+        if (token) {
+            requestUrl.searchParams.set('auth', token);
+        }
+
+        return requestUrl;
+    }
+
     async publishGameToFirebase(payload) {
         const config = this.getPublicLibraryFirebaseConfig();
         if (!config.configured) return false;
 
-        const token = await this._getFirebaseAuthToken();
-        const headers = { 'Content-Type': 'application/json' };
-        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const requestUrl = await this._buildFirebaseRestUrl(`community_games/${encodeURIComponent(payload.id)}.json`);
+        if (!requestUrl) return false;
 
-        const response = await fetch(`${config.url}/community_games/${encodeURIComponent(payload.id)}.json`, {
+        const response = await fetch(requestUrl, {
             method: 'PUT',
-            headers,
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
 
@@ -921,14 +939,10 @@ export class UIManager {
         const config = this.getPublicLibraryFirebaseConfig();
         if (!config.configured) return false;
 
-        const token = await this._getFirebaseAuthToken();
-        const headers = {};
-        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const requestUrl = await this._buildFirebaseRestUrl(`community_games/${encodeURIComponent(gameId)}.json`);
+        if (!requestUrl) return false;
 
-        const response = await fetch(`${config.url}/community_games/${encodeURIComponent(gameId)}.json`, {
-            method: 'DELETE',
-            headers
-        });
+        const response = await fetch(requestUrl, { method: 'DELETE' });
         return response.ok;
     }
 
@@ -2091,7 +2105,7 @@ export class UIManager {
                         this.notify('Published!', `"${game.title}" is now live in the community catalog.`, 'success');
                         this.renderLibrary();
                     } else if (this.canSyncPublicLibrary()) {
-                        this.notify('Publish Failed', 'Ensure you have an active connection and Supabase is configured.', 'error');
+                        this.notify('Publish Failed', 'Ensure you are signed in to Firebase and the database is configured.', 'error');
                     }
                 });
             }
@@ -2099,7 +2113,7 @@ export class UIManager {
     }
 
     /**
-     * Renders games from Supabase in the community grid.
+     * Renders games from Firebase in the community grid.
      */
     async renderCommunity() {
         const grid = document.getElementById('community-grid');
@@ -3557,21 +3571,17 @@ export class UIManager {
         const recoveryGameTitle = this.pendingRecoverySession?.title || 'None';
         const activeTheme = this.getTheme();
         const syncTarget = this.getPublicLibrarySyncTarget();
-        const catalogModeLabel = syncTarget?.kind === 'supabase'
-            ? 'Supabase'
-            : syncTarget?.kind === 'firebase'
+        const catalogModeLabel = syncTarget?.kind === 'firebase'
                 ? 'Firebase'
                 : syncTarget?.kind === 'api'
                     ? 'Shared API'
                     : 'Standalone Mode';
-        const catalogPanelTitle = syncTarget?.kind === 'supabase'
-            ? 'Supabase Catalog'
+        const catalogPanelTitle = syncTarget?.kind === 'firebase'
+            ? 'Firebase Catalog'
             : syncTarget
                 ? 'Shared Catalog'
                 : 'Local Site Data';
-        const catalogPanelCopy = syncTarget?.kind === 'supabase'
-            ? 'Public games load from Supabase when configured. The JSON cache remains a fallback for static or offline hosting.'
-            : syncTarget?.kind === 'firebase'
+        const catalogPanelCopy = syncTarget?.kind === 'firebase'
                 ? 'Public games load from Firebase when configured. The JSON cache remains a fallback for static or offline hosting.'
                 : syncTarget?.kind === 'api'
                     ? 'Public games load from the shared API first. The JSON cache remains a fallback for static or offline hosting.'
