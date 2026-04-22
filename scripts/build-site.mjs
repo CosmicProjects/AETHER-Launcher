@@ -14,16 +14,6 @@ const copyTargets = [
     'favicon.svg'
 ];
 
-function createBuildManifest() {
-    const now = new Date();
-    const buildStamp = now.getTime().toString(36);
-    return {
-        version: `site-${buildStamp}`,
-        builtAt: now.toISOString(),
-        label: `Build ${buildStamp}`
-    };
-}
-
 async function build() {
     console.log('🏗️ Starting static site build...');
 
@@ -50,12 +40,6 @@ async function build() {
             }
         }
     }
-
-    await fs.writeFile(
-        path.join(outDir, 'site-build.json'),
-        `${JSON.stringify(createBuildManifest(), null, 2)}\n`,
-        'utf8'
-    );
 
     console.log(`✅ Built static site at ${outDir}`);
 }

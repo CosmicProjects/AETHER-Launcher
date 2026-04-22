@@ -12,19 +12,6 @@ const copyTargets = [
     'sw.js'
 ];
 
-function createBuildManifest() {
-    const now = new Date();
-    const commitSha = process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || '';
-    const buildStamp = now.getTime().toString(36);
-    const version = commitSha ? `${buildStamp}-${commitSha.slice(0, 12)}` : `local-${buildStamp}`;
-
-    return {
-        version,
-        builtAt: now.toISOString(),
-        label: commitSha ? `Build ${commitSha.slice(0, 12)}` : `Build ${buildStamp}`
-    };
-}
-
 async function copyTarget(target) {
     const sourcePath = path.join(rootDir, target);
     const destinationPath = path.join(publicDir, target);
@@ -52,13 +39,6 @@ async function syncAssets() {
             }
         }
     }
-
-    const buildManifest = createBuildManifest();
-    await fs.writeFile(
-        path.join(publicDir, 'site-build.json'),
-        `${JSON.stringify(buildManifest, null, 2)}\n`,
-        'utf8'
-    );
 
     console.log(`Synced Next.js public assets into ${publicDir}`);
 }

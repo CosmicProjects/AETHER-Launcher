@@ -678,7 +678,7 @@ export class UIManager {
     }
 
     async scanForGameUpdates({ notify = true } = {}) {
-        if (!env.status.isLocal || this.gameUpdateCheckInProgress) {
+        if (this.gameUpdateCheckInProgress) {
             return [];
         }
 
@@ -687,6 +687,14 @@ export class UIManager {
             const games = await storage.getAllGames();
             const newlyDetected = [];
             let mutated = false;
+            const syncTarget = this.getPublicLibrarySyncTarget();
+            const usePublicCatalog = Boolean(syncTarget) && !env.status.isLocal;
+            let publicGamesById = null;
+
+            if (usePublicCatalog) {
+                await this.loadPublicLibrary({ force: true });
+                publicGamesById = new Map((this.publicGames || []).map(game => [game?.id, game]));
+            }
 
             for (const game of games) {
                 const sourceFolder = this.getGameSourceFolder(game);
@@ -701,19 +709,10 @@ export class UIManager {
                     needsSave = true;
                 }
 
-                if (!sourceFolder) {
-                    if (needsSave) {
-                        await storage.saveGame(game);
-                        mutated = true;
-                    }
-                    continue;
-                }
+                let sourceSignature = null;
 
-                try {
-                    const response = await fetch(`/api/sync-game?folder=${encodeURIComponent(sourceFolder)}`, { cache: 'no-store' });
-                    const data = await response.json();
-
-                    if (!response.ok || !data?.success || !data.files) {
+                if (env.status.isLocal) {
+                    if (!sourceFolder) {
                         if (needsSave) {
                             await storage.saveGame(game);
                             mutated = true;
@@ -721,30 +720,64 @@ export class UIManager {
                         continue;
                     }
 
-                    const serverSignature = await gameEngine.buildFileContentSignatureFromEncodedFiles(data.files, game.entryPoint);
-                    const updateAvailable = localSignature !== serverSignature;
+                    try {
+                        const response = await fetch(`/api/sync-game?folder=${encodeURIComponent(sourceFolder)}`, { cache: 'no-store' });
+                        const data = await response.json();
 
-                    if (updateAvailable) {
-                        if (!game.updateAvailable || game.updateSourceSignature !== serverSignature) {
-                            newlyDetected.push(game);
+                        if (!response.ok || !data?.success || !data.files) {
+                            if (needsSave) {
+                                await storage.saveGame(game);
+                                mutated = true;
+                            }
+                            continue;
                         }
-                        game.updateAvailable = true;
-                        game.updateSourceSignature = serverSignature;
-                        game.updateDetectedAt = Date.now();
-                        needsSave = true;
-                    } else if (game.updateAvailable || game.updateSourceSignature || game.updateDetectedAt) {
-                        game.updateAvailable = false;
-                        delete game.updateSourceSignature;
-                        delete game.updateDetectedAt;
-                        needsSave = true;
+
+                        sourceSignature = await gameEngine.buildFileContentSignatureFromEncodedFiles(data.files, game.entryPoint);
+                    } catch (err) {
+                        console.warn(`Unable to check updates for "${game.title}":`, err);
+                        continue;
+                    }
+                } else if (usePublicCatalog) {
+                    const publicGame = publicGamesById?.get(game.id);
+                    if (!publicGame?.encodedFiles || Object.keys(publicGame.encodedFiles).length === 0) {
+                        if (needsSave) {
+                            await storage.saveGame(game);
+                            mutated = true;
+                        }
+                        continue;
                     }
 
+                    sourceSignature = publicGame.contentSignature && publicGame.contentSignatureVersion === 2
+                        ? publicGame.contentSignature
+                        : await gameEngine.buildFileContentSignatureFromEncodedFiles(publicGame.encodedFiles, publicGame.entryPoint || game.entryPoint);
+                } else {
                     if (needsSave) {
                         await storage.saveGame(game);
                         mutated = true;
                     }
-                } catch (err) {
-                    console.warn(`Unable to check updates for "${game.title}":`, err);
+                    continue;
+                }
+
+                const updateAvailable = localSignature !== sourceSignature;
+
+                if (updateAvailable) {
+                    if (!game.updateAvailable || game.updateSourceSignature !== sourceSignature) {
+                        newlyDetected.push(game);
+                    }
+                    game.updateAvailable = true;
+                    game.updateSourceSignature = sourceSignature;
+                    game.updateDetectedAt = Date.now();
+                    needsSave = true;
+                } else if (game.updateAvailable || game.updateSourceSignature || game.updateDetectedAt) {
+                    game.updateAvailable = false;
+                    delete game.updateSourceSignature;
+                    delete game.updateDetectedAt;
+                    needsSave = true;
+                }
+
+                if (needsSave) {
+                    await storage.saveGame(game);
+                    mutated = true;
                 }
             }
 
@@ -1328,6 +1361,14 @@ export class UIManager {
         return publicGame ? this.clonePublicGame(publicGame) : null;
     }
 
+    async getPublicGameById(gameId, { force = false } = {}) {
+        if (!gameId) return null;
+
+        await this.loadPublicLibrary({ force });
+        const publicGame = (this.publicGames || []).find(game => game?.id === gameId);
+        return publicGame ? this.clonePublicGame(publicGame) : null;
+    }
+
     getGameBadges(game, duplicateIndex = null) {
         const badges = [];
         const sizeBytes = this.getGameSizeBytes(game);
@@ -1630,7 +1671,8 @@ export class UIManager {
             : null;
         const duplicateGroups = Array.from(duplicateIndex.values());
         const brokenCount = games.filter(game => this.isGameBroken(game)).length;
-        const updateGames = env.status.isLocal ? games.filter(game => game.updateAvailable) : [];
+        const syncTarget = this.getPublicLibrarySyncTarget();
+        const updateGames = (env.status.isLocal || syncTarget) ? games.filter(game => game.updateAvailable) : [];
 
         if (this.pendingRecoverySession && !recoveryGame) {
             this.pendingRecoverySession = null;
@@ -1643,18 +1685,18 @@ export class UIManager {
                     <div>
                         <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-amber-300/80 mb-2">Update Queue</div>
                         <div class="font-700 text-white">${updateGames.length} game${updateGames.length === 1 ? '' : 's'} ${updateGames.length === 1 ? 'has' : 'have'} updates available</div>
-                        <div class="text-sm text-white/45 mt-1">${this.formatUpdateSummary(updateGames.map(game => game.title))} Open Updates Hub to sync the changed game folders.</div>
+                        <div class="text-sm text-white/45 mt-1">${this.formatUpdateSummary(updateGames.map(game => game.title))} Open Updates Hub to sync the updated games.</div>
                     </div>
                     <button data-notice-action="open-updates" class="px-4 py-2 rounded-xl bg-amber-400/15 border border-amber-300/20 text-amber-100 text-sm font-700 active:scale-95 transition-all">Open Updates Hub</button>
                 </div>
             `);
-        } else if (!env.status.isLocal) {
+        } else if (!env.status.isLocal && syncTarget) {
             items.push(`
                 <div class="launcher-notice rounded-2xl p-4 md:p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                     <div>
-                        <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-accent/80 mb-2">Deployment Updates</div>
-                        <div class="font-700 text-white">Site updates are automatic on live builds</div>
-                        <div class="text-sm text-white/45 mt-1">Game folder syncing stays on the local dev server. New deployments will show the site update screen when they arrive.</div>
+                        <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-accent/80 mb-2">Live Catalog</div>
+                        <div class="font-700 text-white">Game updates are available on the live site</div>
+                        <div class="text-sm text-white/45 mt-1">This deployment syncs against the public catalog, so the Update Hub can refresh installed games here.</div>
                     </div>
                 </div>
             `);
@@ -3158,10 +3200,16 @@ export class UIManager {
         const view = document.getElementById('view-updates');
         if (!view) return;
         
-        await this.loadPublicLibrary();
+        const syncTarget = this.getPublicLibrarySyncTarget();
+        await this.loadPublicLibrary({ force: !env.status.isLocal && Boolean(syncTarget) });
         const localGames = await storage.getAllGames();
-        const games = this.getCombinedLibraryGames(localGames);
-        const syncEnabled = env.status.isLocal;
+        const games = localGames;
+        const syncEnabled = env.status.isLocal || Boolean(syncTarget);
+        const liveCatalogMode = !env.status.isLocal && Boolean(syncTarget);
+        const updateActionLabel = liveCatalogMode ? 'SYNC FROM SITE' : 'UPDATE FILES';
+        const headerCopy = liveCatalogMode
+            ? 'Synchronize installed games with the live site catalog.'
+            : 'Synchronize installed games with your local project folders.';
         
         const updateCount = syncEnabled ? games.filter(game => game.updateAvailable).length : 0;
         const sortedGames = [...games].sort((a, b) => {
@@ -3177,12 +3225,18 @@ export class UIManager {
             <div class="max-w-4xl mx-auto">
                 <div class="mb-8">
                     <h2 class="text-3xl font-800 mb-1">Update Hub</h2>
-                    <p class="text-white/40 text-sm font-500">Synchronize library games with your local project folders</p>
-                    ${!syncEnabled ? `
+                    <p class="text-white/40 text-sm font-500">${headerCopy}</p>
+                    ${liveCatalogMode ? `
+                        <div class="mt-4 rounded-2xl border border-brand-primary/20 bg-brand-primary/10 p-4 md:p-5">
+                            <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-primary/80 mb-2">Live Catalog</div>
+                            <div class="font-700 text-white">Updates pull from the site catalog</div>
+                            <div class="text-sm text-white/45 mt-1">Installed games can be refreshed here from the public catalog.</div>
+                        </div>
+                    ` : !syncEnabled ? `
                         <div class="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 md:p-5">
                             <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-accent/80 mb-2">Live Site Mode</div>
-                            <div class="font-700 text-white">Game syncing is disabled here</div>
-                            <div class="text-sm text-white/45 mt-1">This page is read-only in production. Live deployments show the site update screen automatically when a new build is published.</div>
+                            <div class="font-700 text-white">Game syncing is unavailable here</div>
+                            <div class="text-sm text-white/45 mt-1">No public catalog sync target is configured for this deployment.</div>
                         </div>
                     ` : ''}
                     ${updateCount > 0 ? `
@@ -3210,7 +3264,7 @@ export class UIManager {
                                      <div class="text-xs font-600 ${syncEnabled && game.updateAvailable ? 'text-amber-300' : 'text-white/60'}">${syncEnabled && game.updateAvailable ? 'Update available' : new Date(game.lastUpdatedAt || game.addedAt).toLocaleDateString()}</div>
                                 </div>
                                 <button class="update-game-btn px-6 py-2 ${syncEnabled ? (game.updateAvailable ? 'bg-amber-400/15 hover:bg-amber-400/25 text-amber-100 border border-amber-300/20' : 'bg-brand-primary/10 hover:bg-brand-primary text-brand-primary hover:text-white') : 'bg-white/5 text-white/30 border border-white/10 cursor-not-allowed'} rounded-xl text-xs font-700 transition-all active:scale-95" data-id="${game.id}" ${syncEnabled ? '' : 'disabled'}>
-                                    ${syncEnabled ? 'UPDATE FILES' : 'LOCAL ONLY'}
+                                    ${syncEnabled ? updateActionLabel : 'UNAVAILABLE'}
                                 </button>
                             </div>
                         </div>
@@ -3246,10 +3300,8 @@ export class UIManager {
         const game = await storage.getGame(gameId);
         if (!game) return;
 
-        if (!env.status.isLocal) {
-            this.notify('Game sync is local-only', 'That action talks to your dev server. Deployed builds use the site update screen instead.', 'info');
-            return;
-        }
+        const syncTarget = this.getPublicLibrarySyncTarget();
+        const useLiveCatalog = !env.status.isLocal && Boolean(syncTarget);
 
         const overlay = document.getElementById('sync-overlay');
         const syncBar = document.getElementById('sync-bar');
@@ -3262,24 +3314,79 @@ export class UIManager {
         syncTitle.textContent = `Syncing "${game.title}"`;
         syncBar.style.width = '0%';
         syncPercent.textContent = '0%';
-        syncStatus.textContent = 'Contacting Dev Server...';
+        syncStatus.classList.remove('text-brand-primary', 'text-white/40', 'text-red-500');
+        syncStatus.textContent = useLiveCatalog
+            ? 'Loading the latest version from the site catalog...'
+            : 'Connecting to dev server...';
+
+        const finishOverlay = (delayMs = 0) => {
+            setTimeout(() => {
+                overlay.classList.add('hidden');
+                overlay.classList.remove('flex');
+                syncStatus.classList.remove('text-brand-primary', 'text-white/40', 'text-red-500');
+                this.renderUpdates();
+                this.renderLibrary();
+                if (this.currentView === 'storage') {
+                    this.renderStorageManager();
+                }
+            }, delayMs);
+        };
 
         try {
-            // Priority: Attempt Automated Server Sync
-            const folderName = game.entryPoint.includes('/') ? game.entryPoint.split('/')[0] : null;
-            
+            if (useLiveCatalog) {
+                await this.loadPublicLibrary({ force: true });
+                const sourceGame = (this.publicGames || []).find(publicGame => publicGame?.id === gameId);
+
+                if (!sourceGame?.encodedFiles || Object.keys(sourceGame.encodedFiles).length === 0) {
+                    syncStatus.textContent = 'Game not found in the live catalog.';
+                    syncStatus.classList.add('text-red-500');
+                    this.notify('Update failed', `"${game.title}" is not in the live catalog.`, 'error');
+                    finishOverlay(3000);
+                    return;
+                }
+
+                const syncResult = await gameEngine.syncFilesFromEncodedFiles(gameId, sourceGame.encodedFiles, (pct, status) => {
+                    syncBar.style.width = pct + '%';
+                    syncPercent.textContent = pct + '%';
+                    syncStatus.textContent = status;
+                }, {
+                    sourceLabel: 'the live catalog',
+                    changelogTitle: 'Synced from site'
+                });
+
+                if (syncResult.changed) {
+                    syncStatus.textContent = 'Update Complete!';
+                    syncStatus.classList.add('text-brand-primary');
+                    this.notify('Game updated', `"${game.title}" was synchronized from the live catalog.`, 'success');
+                } else {
+                    syncStatus.textContent = 'No changes detected. Already up to date.';
+                    syncStatus.classList.add('text-white/40');
+                    this.notify('Already up to date', `"${game.title}" matched the current live catalog.`, 'info');
+                }
+
+                finishOverlay(syncResult.changed ? 1500 : 2500);
+                return;
+            }
+
+            // Priority: Attempt automated dev-server sync when running locally.
+            const folderName = game.entryPoint && game.entryPoint.includes('/') ? game.entryPoint.split('/')[0] : null;
+
             if (folderName && !files) {
                 console.log(`[SYNC] Attempting automated sync for folder: ${folderName}`);
-                const response = await fetch(`/api/sync-game?folder=${encodeURIComponent(folderName)}`);
+                syncStatus.textContent = 'Loading files from the dev server...';
+                const response = await fetch(`/api/sync-game?folder=${encodeURIComponent(folderName)}`, { cache: 'no-store' });
                 const data = await response.json();
-                
-                if (data.success) {
-                    const syncResult = await gameEngine.syncFilesFromServer(gameId, data.files, (pct, status) => {
+
+                if (data.success && data.files) {
+                    const syncResult = await gameEngine.syncFilesFromEncodedFiles(gameId, data.files, (pct, status) => {
                         syncBar.style.width = pct + '%';
                         syncPercent.textContent = pct + '%';
                         syncStatus.textContent = status;
+                    }, {
+                        sourceLabel: 'the dev server',
+                        changelogTitle: 'Synced from server'
                     });
-                    
+
                     if (syncResult.changed) {
                         syncStatus.textContent = 'Update Complete!';
                         syncStatus.classList.add('text-brand-primary');
@@ -3302,43 +3409,65 @@ export class UIManager {
                         }
                     }
 
-                    setTimeout(() => {
-                        overlay.classList.add('hidden');
-                        overlay.classList.remove('flex');
-                        syncStatus.classList.remove('text-brand-primary', 'text-white/40');
-                        this.renderUpdates();
-                        this.renderLibrary();
-                        if (this.currentView === 'storage') {
-                            this.renderStorageManager();
-                        }
-                    }, syncResult.changed ? 1500 : 2500);
+                    finishOverlay(syncResult.changed ? 1500 : 2500);
                     return;
                 } else {
                     console.error(`[SYNC] Automated sync failed: ${data.error}`);
                     syncStatus.textContent = 'Folder not found on server.';
                     syncStatus.classList.add('text-red-500');
                     this.notify('Update failed', 'Folder not found on the dev server.', 'error');
-                    setTimeout(() => {
-                        overlay.classList.add('hidden');
-                        overlay.classList.remove('flex');
-                    }, 3000);
+                    finishOverlay(3000);
                     return;
                 }
             }
 
-            // Manual fallback only if explicitly passed (not triggered by button)
+            // Manual fallback only if explicitly passed (not triggered by button).
             if (files && files.length > 0) {
-                // ... manual processing could go here if needed ...
+                syncStatus.textContent = 'Updating from uploaded files...';
+                const syncResult = await gameEngine.refreshGameFiles(gameId, files);
+
+                if (syncResult.success) {
+                    syncStatus.textContent = 'Update Complete!';
+                    syncStatus.classList.add('text-brand-primary');
+                    this.notify('Game updated', `"${game.title}" was updated from uploaded files.`, 'success');
+
+                    const updatedGame = syncResult.game || game;
+                    if ((syncResult.changed || syncResult.upgraded) && updatedGame?.isPublic !== false) {
+                        const published = await this.publishGameToPublicLibrary(updatedGame);
+                        if (!published && this.canSyncPublicLibrary()) {
+                            this.notify(
+                                'Public sync unavailable',
+                                `"${updatedGame.title}" was updated locally, but the shared catalog could not be refreshed.`,
+                                'warning'
+                            );
+                        }
+                    }
+
+                    finishOverlay(1500);
+                    return;
+                }
+
+                throw new Error(syncResult.error || 'Unable to refresh files.');
             }
+
+            syncStatus.textContent = useLiveCatalog
+                ? 'Unable to find a live catalog source.'
+                : 'No update source available.';
+            syncStatus.classList.add('text-red-500');
+            this.notify('Update failed', useLiveCatalog
+                ? 'The live catalog source could not be loaded.'
+                : 'No update source was available.', 'error');
+            finishOverlay(3000);
         } catch (err) {
             console.error('Update error:', err);
-            syncStatus.textContent = 'Connection to dev server lost.';
+            syncStatus.textContent = useLiveCatalog
+                ? 'Unable to reach the live catalog.'
+                : 'Connection to dev server lost.';
             syncStatus.classList.add('text-red-500');
-            this.notify('Update failed', 'Connection to the dev server was lost.', 'error');
-            setTimeout(() => {
-                overlay.classList.add('hidden');
-                overlay.classList.remove('flex');
-            }, 3000);
+            this.notify('Update failed', useLiveCatalog
+                ? 'Unable to reach the live catalog.'
+                : 'Connection to the dev server was lost.', 'error');
+            finishOverlay(3000);
         }
     }
 

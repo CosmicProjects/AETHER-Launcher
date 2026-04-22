@@ -331,17 +331,18 @@ export class GameEngine {
     }
 
     /**
-     * Synchronizes files directly from the local dev server.
+     * Synchronizes files from an encoded file map.
      */
-    async syncFilesFromServer(gameId, encodedFiles, onProgress) {
+    async syncFilesFromEncodedFiles(gameId, encodedFiles, onProgress, options = {}) {
         const game = await storage.getGame(gameId);
         if (!game) return { error: 'NOT_FOUND' };
 
+        const sourceLabel = String(options.sourceLabel || 'the source');
         // Determine if we need to prefix paths (e.g. if the entry point was Folder/index.html)
         const pathPrefix = this.getPathPrefix(game.entryPoint);
 
         const fileData = {};
-        const entries = Object.entries(encodedFiles);
+        const entries = Object.entries(encodedFiles || {});
         const total = entries.length;
         let changeDetected = false;
         const signatureParts = [];
@@ -412,12 +413,19 @@ export class GameEngine {
             contentSignatureVersion: 2,
             changelogEntry: {
                 type: 'update',
-                title: 'Synced from server',
-                message: `Synced ${total} file${total === 1 ? '' : 's'} from the dev server.`
+                title: options.changelogTitle || 'Synced from source',
+                message: options.changelogMessage || `Synced ${total} file${total === 1 ? '' : 's'} from ${sourceLabel}.`
             }
         });
         await storage.saveGame(game);
         return { success: true, changed: true, game };
+    }
+
+    async syncFilesFromServer(gameId, encodedFiles, onProgress) {
+        return this.syncFilesFromEncodedFiles(gameId, encodedFiles, onProgress, {
+            sourceLabel: 'the dev server',
+            changelogTitle: 'Synced from server'
+        });
     }
 
     /**

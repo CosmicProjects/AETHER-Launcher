@@ -8,7 +8,6 @@
 import { storage } from './storage.js';
 import { ui } from './ui.js';
 import { auth } from './auth.js';
-import { startSiteUpdateMonitor } from './siteUpdates.js';
 
 async function initAether() {
     console.log('🚀 AETHER Launcher: Initializing Engine...');
@@ -27,8 +26,6 @@ async function initAether() {
             console.error('CRITICAL: AETHER Filesystem Registration Failed:', error);
         }
     }
-
-    startSiteUpdateMonitor();
 
     await auth.ready;
 
