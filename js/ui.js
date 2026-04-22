@@ -1630,7 +1630,7 @@ export class UIManager {
             : null;
         const duplicateGroups = Array.from(duplicateIndex.values());
         const brokenCount = games.filter(game => this.isGameBroken(game)).length;
-        const updateGames = games.filter(game => game.updateAvailable);
+        const updateGames = env.status.isLocal ? games.filter(game => game.updateAvailable) : [];
 
         if (this.pendingRecoverySession && !recoveryGame) {
             this.pendingRecoverySession = null;
@@ -1646,6 +1646,16 @@ export class UIManager {
                         <div class="text-sm text-white/45 mt-1">${this.formatUpdateSummary(updateGames.map(game => game.title))} Open Updates Hub to sync the changed game folders.</div>
                     </div>
                     <button data-notice-action="open-updates" class="px-4 py-2 rounded-xl bg-amber-400/15 border border-amber-300/20 text-amber-100 text-sm font-700 active:scale-95 transition-all">Open Updates Hub</button>
+                </div>
+            `);
+        } else if (!env.status.isLocal) {
+            items.push(`
+                <div class="launcher-notice rounded-2xl p-4 md:p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-accent/80 mb-2">Deployment Updates</div>
+                        <div class="font-700 text-white">Site updates are automatic on live builds</div>
+                        <div class="text-sm text-white/45 mt-1">Game folder syncing stays on the local dev server. New deployments will show the site update screen when they arrive.</div>
+                    </div>
                 </div>
             `);
         }
@@ -3151,11 +3161,15 @@ export class UIManager {
         await this.loadPublicLibrary();
         const localGames = await storage.getAllGames();
         const games = this.getCombinedLibraryGames(localGames);
+        const syncEnabled = env.status.isLocal;
         
-        const updateCount = games.filter(game => game.updateAvailable).length;
+        const updateCount = syncEnabled ? games.filter(game => game.updateAvailable).length : 0;
         const sortedGames = [...games].sort((a, b) => {
-            const updateDelta = Number(Boolean(b.updateAvailable)) - Number(Boolean(a.updateAvailable));
-            if (updateDelta !== 0) return updateDelta;
+            if (syncEnabled) {
+                const updateDelta = Number(Boolean(b.updateAvailable)) - Number(Boolean(a.updateAvailable));
+                if (updateDelta !== 0) return updateDelta;
+            }
+
             return String(a.title || '').localeCompare(String(b.title || ''));
         });
 
@@ -3164,6 +3178,13 @@ export class UIManager {
                 <div class="mb-8">
                     <h2 class="text-3xl font-800 mb-1">Update Hub</h2>
                     <p class="text-white/40 text-sm font-500">Synchronize library games with your local project folders</p>
+                    ${!syncEnabled ? `
+                        <div class="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 md:p-5">
+                            <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-accent/80 mb-2">Live Site Mode</div>
+                            <div class="font-700 text-white">Game syncing is disabled here</div>
+                            <div class="text-sm text-white/45 mt-1">This page is read-only in production. Live deployments show the site update screen automatically when a new build is published.</div>
+                        </div>
+                    ` : ''}
                     ${updateCount > 0 ? `
                         <div class="mt-4 inline-flex items-center gap-2 px-3 py-2 rounded-full border border-amber-300/20 bg-amber-400/10 text-amber-100 text-xs font-700">
                             <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
@@ -3185,11 +3206,11 @@ export class UIManager {
                             </div>
                             <div class="flex items-center gap-3">
                                 <div class="text-right mr-4">
-                                     <div class="text-[10px] font-700 text-white/20 uppercase">${game.updateAvailable ? 'Update Status' : 'Last Modified'}</div>
-                                     <div class="text-xs font-600 ${game.updateAvailable ? 'text-amber-300' : 'text-white/60'}">${game.updateAvailable ? 'Update available' : new Date(game.lastUpdatedAt || game.addedAt).toLocaleDateString()}</div>
+                                     <div class="text-[10px] font-700 text-white/20 uppercase">${syncEnabled && game.updateAvailable ? 'Update Status' : 'Last Modified'}</div>
+                                     <div class="text-xs font-600 ${syncEnabled && game.updateAvailable ? 'text-amber-300' : 'text-white/60'}">${syncEnabled && game.updateAvailable ? 'Update available' : new Date(game.lastUpdatedAt || game.addedAt).toLocaleDateString()}</div>
                                 </div>
-                                <button class="update-game-btn px-6 py-2 ${game.updateAvailable ? 'bg-amber-400/15 hover:bg-amber-400/25 text-amber-100 border border-amber-300/20' : 'bg-brand-primary/10 hover:bg-brand-primary text-brand-primary hover:text-white'} rounded-xl text-xs font-700 transition-all active:scale-95" data-id="${game.id}">
-                                    UPDATE FILES
+                                <button class="update-game-btn px-6 py-2 ${syncEnabled ? (game.updateAvailable ? 'bg-amber-400/15 hover:bg-amber-400/25 text-amber-100 border border-amber-300/20' : 'bg-brand-primary/10 hover:bg-brand-primary text-brand-primary hover:text-white') : 'bg-white/5 text-white/30 border border-white/10 cursor-not-allowed'} rounded-xl text-xs font-700 transition-all active:scale-95" data-id="${game.id}" ${syncEnabled ? '' : 'disabled'}>
+                                    ${syncEnabled ? 'UPDATE FILES' : 'LOCAL ONLY'}
                                 </button>
                             </div>
                         </div>
@@ -3226,7 +3247,7 @@ export class UIManager {
         if (!game) return;
 
         if (!env.status.isLocal) {
-            this.notify('Updates unavailable', 'Game syncing is only available on the local dev server.', 'info');
+            this.notify('Game sync is local-only', 'That action talks to your dev server. Deployed builds use the site update screen instead.', 'info');
             return;
         }
 
