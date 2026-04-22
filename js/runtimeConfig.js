@@ -17,4 +17,3 @@ export function readPublicLibraryReadUrl(config = getConfigObject()) {
 export function readPublicLibraryApiUrl(config = getConfigObject()) {
     return String(config.publicLibraryApiUrl || '').trim().replace(/\/$/, '');
 }
-
