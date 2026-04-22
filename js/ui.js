@@ -148,7 +148,9 @@ function inferPublicMimeType(pathValue, fallback = 'application/octet-stream') {
 }
 
 function encodeFirebaseKey(key) {
-    return encodeURIComponent(String(key || ''));
+    // Firebase keys cannot contain dots either, so escape them in addition to the
+    // characters handled by encodeURIComponent.
+    return encodeURIComponent(String(key || '')).replace(/\./g, '%2E');
 }
 
 function decodeFirebaseKey(key) {
@@ -935,7 +937,7 @@ export class UIManager {
         const config = this.getPublicLibraryFirebaseConfig();
         if (!config.configured) return false;
 
-        const requestUrl = await this._buildFirebaseRestUrl(`community_games/${encodeURIComponent(payload.id)}.json`);
+        const requestUrl = await this._buildFirebaseRestUrl(`community_games/${encodeFirebaseKey(payload.id)}.json`);
         if (!requestUrl) return false;
 
         const response = await fetch(requestUrl, {
@@ -952,7 +954,7 @@ export class UIManager {
         const config = this.getPublicLibraryFirebaseConfig();
         if (!config.configured) return false;
 
-        const requestUrl = await this._buildFirebaseRestUrl(`community_games/${encodeURIComponent(gameId)}.json`);
+        const requestUrl = await this._buildFirebaseRestUrl(`community_games/${encodeFirebaseKey(gameId)}.json`);
         if (!requestUrl) return false;
 
         const response = await fetch(requestUrl, { method: 'DELETE' });
