@@ -147,6 +147,19 @@ function inferPublicMimeType(pathValue, fallback = 'application/octet-stream') {
     return PUBLIC_FILE_MIME_TYPES[ext] || fallback;
 }
 
+function encodeFirebaseKey(key) {
+    return encodeURIComponent(String(key || ''));
+}
+
+function decodeFirebaseKey(key) {
+    const value = String(key || '');
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return value;
+    }
+}
+
 const LIBRARY_VIEWS = {
     library: {
         eyebrow: 'Collection Overview',
@@ -973,12 +986,14 @@ export class UIManager {
             : rawGame.files && typeof rawGame.files === 'object'
                 ? rawGame.files
                 : {};
+        const shouldDecodeFirebaseKeys = rawGame.firebaseKeyEncoding === 'uri';
         const encodedFiles = {};
         const fileTypes = {};
         const files = {};
         let calculatedBytes = 0;
 
-        for (const [filePath, rawValue] of Object.entries(sourceFiles)) {
+        for (const [storedPath, rawValue] of Object.entries(sourceFiles)) {
+            const filePath = shouldDecodeFirebaseKeys ? decodeFirebaseKey(storedPath) : storedPath;
             let base64 = '';
             let type = null;
 
@@ -1046,6 +1061,7 @@ export class UIManager {
             publicSource: rawGame.publicSource || 'owner',
             publicPublishedAt: rawGame.publicPublishedAt || rawGame.publicUpdatedAt || now,
             publicUpdatedAt: rawGame.publicUpdatedAt || now,
+            firebaseKeyEncoding: rawGame.firebaseKeyEncoding || null,
             updateAvailable: false,
             files,
             encodedFiles,
@@ -1157,8 +1173,9 @@ export class UIManager {
 
             const bytes = new Uint8Array(await blob.arrayBuffer());
             calculatedBytes += bytes.length;
-            encodedFiles[filePath] = this.bytesToBase64(bytes);
-            fileTypes[filePath] = blob.type || inferPublicMimeType(filePath);
+            const firebaseKey = encodeFirebaseKey(filePath);
+            encodedFiles[firebaseKey] = this.bytesToBase64(bytes);
+            fileTypes[firebaseKey] = blob.type || inferPublicMimeType(filePath);
         }
 
         return {
@@ -1182,6 +1199,7 @@ export class UIManager {
             publicSource: game.publicSource || 'owner',
             publicPublishedAt: game.publicPublishedAt || null,
             publicUpdatedAt: Date.now(),
+            firebaseKeyEncoding: 'uri',
             encodedFiles,
             fileTypes
         };
