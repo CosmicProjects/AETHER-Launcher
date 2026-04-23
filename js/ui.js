@@ -1675,7 +1675,7 @@ export class UIManager {
         const updateGames = (env.status.isLocal || syncTarget) ? games.filter(game => game.updateAvailable) : [];
         const updateSummaryCopy = env.status.isLocal
             ? `${this.formatUpdateSummary(updateGames.map(game => game.title))} Open Updates Hub to sync the updated games.`
-            : `${this.formatUpdateSummary(updateGames.map(game => game.title))} Open Updates Hub to upload the newer version.`;
+            : `${this.formatUpdateSummary(updateGames.map(game => game.title))} Open Updates Hub to pull the newer version.`;
 
         if (this.pendingRecoverySession && !recoveryGame) {
             this.pendingRecoverySession = null;
@@ -1697,9 +1697,9 @@ export class UIManager {
             items.push(`
                 <div class="launcher-notice rounded-2xl p-4 md:p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                     <div>
-                        <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-accent/80 mb-2">Live Publishing</div>
-                        <div class="font-700 text-white">Publish updated games from the live site</div>
-                        <div class="text-sm text-white/45 mt-1">Use the Update Hub to upload a newer game folder and push it into the public catalog.</div>
+                        <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-accent/80 mb-2">Live Catalog</div>
+                        <div class="font-700 text-white">Game updates pull from the live site</div>
+                        <div class="text-sm text-white/45 mt-1">Use the Update Hub to refresh installed games from the public catalog.</div>
                     </div>
                 </div>
             `);
@@ -3208,18 +3208,12 @@ export class UIManager {
         const localGames = await storage.getAllGames();
         const games = localGames;
         const syncEnabled = env.status.isLocal || Boolean(syncTarget);
-        const livePublishingMode = !env.status.isLocal && Boolean(syncTarget);
-        const updateActionLabel = livePublishingMode ? 'UPLOAD UPDATE' : 'UPDATE FILES';
-        const headerCopy = livePublishingMode
-            ? 'Upload a newer game folder here, then publish it to the live catalog.'
+        const liveCatalogMode = !env.status.isLocal && Boolean(syncTarget);
+        const updateActionLabel = liveCatalogMode ? 'SYNC NOW' : 'UPDATE FILES';
+        const headerCopy = liveCatalogMode
+            ? 'Synchronize installed games with the live site catalog.'
             : 'Synchronize installed games with your local project folders.';
-        const updateStatusLabel = game => {
-            if (game?.updateAvailable && livePublishingMode) {
-                return 'Needs publish';
-            }
-
-            return game?.updateAvailable ? 'Update available' : 'Last Modified';
-        };
+        const updateStatusLabel = game => (game?.updateAvailable ? 'Update available' : 'Last Modified');
         
         const updateCount = syncEnabled ? games.filter(game => game.updateAvailable).length : 0;
         const sortedGames = [...games].sort((a, b) => {
@@ -3236,11 +3230,11 @@ export class UIManager {
                 <div class="mb-8">
                     <h2 class="text-3xl font-800 mb-1">Update Hub</h2>
                     <p class="text-white/40 text-sm font-500">${headerCopy}</p>
-                    ${livePublishingMode ? `
+                    ${liveCatalogMode ? `
                         <div class="mt-4 rounded-2xl border border-brand-primary/20 bg-brand-primary/10 p-4 md:p-5">
-                            <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-primary/80 mb-2">Live Publishing</div>
-                            <div class="font-700 text-white">Update games on the live site</div>
-                            <div class="text-sm text-white/45 mt-1">Choose a newer game folder, upload it, and publish the replacement to the public catalog.</div>
+                            <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-primary/80 mb-2">Live Catalog</div>
+                            <div class="font-700 text-white">Updates pull from the site catalog</div>
+                            <div class="text-sm text-white/45 mt-1">Installed games can be refreshed here from the public catalog.</div>
                         </div>
                     ` : !syncEnabled ? `
                         <div class="mt-4 rounded-2xl border border-white/10 bg-white/5 p-4 md:p-5">
@@ -3271,7 +3265,7 @@ export class UIManager {
                             <div class="flex items-center gap-3">
                                 <div class="text-right mr-4">
                                      <div class="text-[10px] font-700 text-white/20 uppercase">${updateStatusLabel(game)}</div>
-                                     <div class="text-xs font-600 ${syncEnabled && game.updateAvailable ? 'text-amber-300' : 'text-white/60'}">${syncEnabled && game.updateAvailable ? (livePublishingMode ? 'Needs publish' : 'Update available') : new Date(game.lastUpdatedAt || game.addedAt).toLocaleDateString()}</div>
+                                     <div class="text-xs font-600 ${syncEnabled && game.updateAvailable ? 'text-amber-300' : 'text-white/60'}">${syncEnabled && game.updateAvailable ? 'Update available' : new Date(game.lastUpdatedAt || game.addedAt).toLocaleDateString()}</div>
                                 </div>
                                 <button class="update-game-btn px-6 py-2 ${syncEnabled ? (game.updateAvailable ? 'bg-amber-400/15 hover:bg-amber-400/25 text-amber-100 border border-amber-300/20' : 'bg-brand-primary/10 hover:bg-brand-primary text-brand-primary hover:text-white') : 'bg-white/5 text-white/30 border border-white/10 cursor-not-allowed'} rounded-xl text-xs font-700 transition-all active:scale-95" data-id="${game.id}" ${syncEnabled ? '' : 'disabled'}>
                                     ${syncEnabled ? updateActionLabel : 'UNAVAILABLE'}
@@ -3290,15 +3284,6 @@ export class UIManager {
         view.querySelectorAll('.update-game-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 this.pendingUpdateId = btn.dataset.id;
-                if (livePublishingMode) {
-                    const updateInput = document.getElementById('update-file-input');
-                    if (updateInput) {
-                        updateInput.value = '';
-                        updateInput.click();
-                        return;
-                    }
-                }
-
                 // Start automated sync attempt first
                 this.performGameUpdate(this.pendingUpdateId);
             });
@@ -3319,22 +3304,10 @@ export class UIManager {
         const game = await storage.getGame(gameId);
         if (!game) return;
 
-        const folderName = game.entryPoint && game.entryPoint.includes('/') ? game.entryPoint.split('/')[0] : null;
-        if (!files && (!env.status.isLocal || !folderName)) {
-            const updateInput = document.getElementById('update-file-input');
-            if (updateInput) {
-                updateInput.value = '';
-                updateInput.click();
-                return;
-            }
+        const syncTarget = this.getPublicLibrarySyncTarget();
+        const useLiveCatalog = !env.status.isLocal && Boolean(syncTarget);
 
-            this.notify(
-                'Choose files',
-                'Select a game folder to upload before updating this entry.',
-                'warning'
-            );
-            return;
-        }
+        const folderName = game.entryPoint && game.entryPoint.includes('/') ? game.entryPoint.split('/')[0] : null;
 
         const overlay = document.getElementById('sync-overlay');
         const syncBar = document.getElementById('sync-bar');
@@ -3348,9 +3321,11 @@ export class UIManager {
         syncBar.style.width = '0%';
         syncPercent.textContent = '0%';
         syncStatus.classList.remove('text-brand-primary', 'text-white/40', 'text-red-500');
-        syncStatus.textContent = env.status.isLocal
-            ? 'Connecting to dev server...'
-            : 'Reading uploaded files...';
+        syncStatus.textContent = useLiveCatalog
+            ? 'Loading the latest version from the live catalog...'
+            : env.status.isLocal
+                ? 'Connecting to dev server...'
+                : 'Reading uploaded files...';
 
         const finishOverlay = (delayMs = 0) => {
             setTimeout(() => {
@@ -3366,6 +3341,41 @@ export class UIManager {
         };
 
         try {
+            if (useLiveCatalog) {
+                await this.loadPublicLibrary({ force: true });
+                const sourceGame = (this.publicGames || []).find(publicGame => publicGame?.id === gameId);
+
+                if (!sourceGame?.encodedFiles || Object.keys(sourceGame.encodedFiles).length === 0) {
+                    syncStatus.textContent = 'Game not found in the live catalog.';
+                    syncStatus.classList.add('text-red-500');
+                    this.notify('Update failed', `"${game.title}" is not in the live catalog.`, 'error');
+                    finishOverlay(3000);
+                    return;
+                }
+
+                const syncResult = await gameEngine.syncFilesFromEncodedFiles(gameId, sourceGame.encodedFiles, (pct, status) => {
+                    syncBar.style.width = pct + '%';
+                    syncPercent.textContent = pct + '%';
+                    syncStatus.textContent = status;
+                }, {
+                    sourceLabel: 'the live catalog',
+                    changelogTitle: 'Synced from site'
+                });
+
+                if (syncResult.changed) {
+                    syncStatus.textContent = 'Update Complete!';
+                    syncStatus.classList.add('text-brand-primary');
+                    this.notify('Game updated', `"${game.title}" was synchronized from the live catalog.`, 'success');
+                } else {
+                    syncStatus.textContent = 'No changes detected. Already up to date.';
+                    syncStatus.classList.add('text-white/40');
+                    this.notify('Already up to date', `"${game.title}" matched the current live catalog.`, 'info');
+                }
+
+                finishOverlay(syncResult.changed ? 1500 : 2500);
+                return;
+            }
+
             // Priority: Attempt automated dev-server sync when running locally.
             if (env.status.isLocal && folderName && !files) {
                 console.log(`[SYNC] Attempting automated sync for folder: ${folderName}`);
@@ -3419,7 +3429,7 @@ export class UIManager {
 
             // Manual fallback only if explicitly passed (not triggered by button).
             if (files && files.length > 0) {
-                syncStatus.textContent = env.status.isLocal ? 'Updating from uploaded files...' : 'Uploading update...';
+                syncStatus.textContent = 'Updating from uploaded files...';
                 const syncResult = await gameEngine.refreshGameFiles(gameId, files);
 
                 if (syncResult.success) {
@@ -3448,21 +3458,21 @@ export class UIManager {
 
             syncStatus.textContent = env.status.isLocal
                 ? 'No update source available.'
-                : 'Choose a folder to upload, then try again.';
+                : 'No live catalog source is available.';
             syncStatus.classList.add('text-red-500');
             this.notify('Update failed', env.status.isLocal
                 ? 'No update source was available.'
-                : 'Choose a folder to upload, then try again.', 'error');
+                : 'No live catalog source is available.', 'error');
             finishOverlay(3000);
         } catch (err) {
             console.error('Update error:', err);
             syncStatus.textContent = env.status.isLocal
                 ? 'Connection to dev server lost.'
-                : 'Unable to process the uploaded update.';
+                : 'Unable to reach the live catalog.';
             syncStatus.classList.add('text-red-500');
             this.notify('Update failed', env.status.isLocal
                 ? 'Connection to the dev server was lost.'
-                : 'Unable to process the uploaded update.', 'error');
+                : 'Unable to reach the live catalog.', 'error');
             finishOverlay(3000);
         }
     }
