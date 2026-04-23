@@ -727,10 +727,13 @@ export class UIManager {
                     }
 
                     try {
-                        const response = await fetch(`/api/sync-game?folder=${encodeURIComponent(sourceFolder)}`, { cache: 'no-store' });
-                        const data = await response.json();
+                        const response = await fetch(`${this.getLocalSyncApiUrl()}?folder=${encodeURIComponent(sourceFolder)}`, { cache: 'no-store' });
+                        const data = await this.readJsonResponse(response);
 
                         if (!response.ok || !data?.success || !data.files) {
+                            if (data?.raw) {
+                                console.warn(`Unable to check updates for "${game.title}": sync endpoint returned non-JSON content.`);
+                            }
                             if (needsSave) {
                                 await storage.saveGame(game);
                                 mutated = true;
@@ -1027,6 +1030,35 @@ export class UIManager {
 
         const bytes = new Uint8Array(await blob.arrayBuffer());
         return this.bytesToBase64(bytes);
+    }
+
+    async readJsonResponse(response) {
+        if (!response) return null;
+
+        const text = await response.text().catch(() => '');
+        if (!text) return null;
+
+        const trimmed = text.trim();
+        if (!trimmed) return null;
+
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            try {
+                return JSON.parse(trimmed);
+            } catch (err) {
+                console.warn('Unable to parse JSON response:', err);
+                return null;
+            }
+        }
+
+        return {
+            success: false,
+            error: 'Unexpected non-JSON response',
+            raw: trimmed
+        };
+    }
+
+    getLocalSyncApiUrl() {
+        return 'http://127.0.0.1:8080/api/sync-game';
     }
 
     async hydratePublicGame(rawGame) {
@@ -3411,10 +3443,10 @@ export class UIManager {
             if (env.status.isLocal && folderName && !files) {
                 console.log(`[SYNC] Attempting automated sync for folder: ${folderName}`);
                 syncStatus.textContent = 'Loading files from the dev server...';
-                const response = await fetch(`/api/sync-game?folder=${encodeURIComponent(folderName)}`, { cache: 'no-store' });
-                const data = await response.json();
+                const response = await fetch(`${this.getLocalSyncApiUrl()}?folder=${encodeURIComponent(folderName)}`, { cache: 'no-store' });
+                const data = await this.readJsonResponse(response);
 
-                if (data.success && data.files) {
+                if (response.ok && data?.success && data.files) {
                     const syncResult = await gameEngine.syncFilesFromEncodedFiles(gameId, data.files, (pct, status) => {
                         syncBar.style.width = pct + '%';
                         syncPercent.textContent = pct + '%';
@@ -3449,7 +3481,7 @@ export class UIManager {
                     finishOverlay(syncResult.changed ? 1500 : 2500);
                     return;
                 } else {
-                    console.error(`[SYNC] Automated sync failed: ${data.error}`);
+                    console.error(`[SYNC] Automated sync failed: ${data?.error || response.statusText || 'Unknown error'}`);
                     syncStatus.textContent = 'Folder not found on server.';
                     syncStatus.classList.add('text-red-500');
                     this.notify('Update failed', 'Folder not found on the dev server.', 'error');

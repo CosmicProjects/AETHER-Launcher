@@ -397,8 +397,8 @@ const server = http.createServer((req, res) => {
         const folderName = urlParams.searchParams.get('folder');
         
         if (!folderName) {
-            res.writeHead(400);
-            return res.end(JSON.stringify({ error: 'Missing folder name' }));
+            sendJsonResponse(res, 400, { success: false, error: 'Missing folder name' });
+            return;
         }
 
         try {
@@ -419,11 +419,12 @@ const server = http.createServer((req, res) => {
             }
 
             if (!gamePath) {
-                res.writeHead(404);
-                return res.end(JSON.stringify({ 
+                sendJsonResponse(res, 404, { 
+                    success: false,
                     error: `Folder "${folderName}" not found.`,
                     searched: searchPaths 
-                }));
+                });
+                return;
             }
 
             console.log(`[${new Date().toLocaleTimeString()}] [SYNC] Synchronizing from: ${gamePath}`);
@@ -434,12 +435,11 @@ const server = http.createServer((req, res) => {
                 encodedFiles[path] = buffer.toString('base64');
             }
 
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, files: encodedFiles }));
+            sendJsonResponse(res, 200, { success: true, files: encodedFiles });
             return;
         } catch (err) {
-            res.writeHead(500);
-            return res.end(JSON.stringify({ error: err.message }));
+            sendJsonResponse(res, 500, { success: false, error: err.message });
+            return;
         }
     }
 

@@ -2,7 +2,7 @@
   "name": "aether-launcher",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/dev-with-sync.mjs",
     "predev": "node scripts/sync-next-assets.mjs",
     "build": "next build",
     "prebuild": "node scripts/sync-next-assets.mjs",
