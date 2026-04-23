@@ -1813,16 +1813,6 @@ export class UIManager {
                     <button data-notice-action="open-updates" class="px-4 py-2 rounded-xl bg-amber-400/15 border border-amber-300/20 text-amber-100 text-sm font-700 active:scale-95 transition-all">Open Updates Hub</button>
                 </div>
             `);
-        } else if (!env.status.isLocal && syncTarget) {
-            items.push(`
-                <div class="launcher-notice rounded-2xl p-4 md:p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                    <div>
-                        <div class="text-[10px] font-800 uppercase tracking-[0.35em] text-brand-accent/80 mb-2">Live Catalog</div>
-                        <div class="font-700 text-white">Game updates pull from the live site</div>
-                        <div class="text-sm text-white/45 mt-1">Use the Update Hub to refresh installed games from the public catalog.</div>
-                    </div>
-                </div>
-            `);
         }
 
         if (recoveryGame) {
