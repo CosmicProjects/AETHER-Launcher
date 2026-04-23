@@ -218,6 +218,8 @@ export class UIManager {
         this.currentView = 'community';
         this.searchQuery = '';
         this.activeWindows = [];
+        this.gameUpdateCheckPromise = null;
+        this.gameUpdateRescanRequested = false;
         this.publicLibraryReady = this.loadPublicLibrary();
         this.preferencesReady = this.loadPreferences();
         this.libraryViewNames = new Set([...Object.keys(LIBRARY_VIEWS), 'recent']);
@@ -679,11 +681,13 @@ export class UIManager {
 
     async scanForGameUpdates({ notify = true } = {}) {
         if (this.gameUpdateCheckInProgress) {
-            return [];
+            this.gameUpdateRescanRequested = true;
+            return this.gameUpdateCheckPromise || [];
         }
 
         this.gameUpdateCheckInProgress = true;
-        try {
+        this.gameUpdateCheckPromise = (async () => {
+            try {
             const games = await storage.getAllGames();
             const newlyDetected = [];
             let mutated = false;
@@ -698,9 +702,11 @@ export class UIManager {
 
             for (const game of games) {
                 const sourceFolder = this.getGameSourceFolder(game);
-                let localSignature = game.contentSignatureVersion === 2 && game.contentSignature
-                    ? game.contentSignature
-                    : await gameEngine.buildFileContentSignature(game.files, game.entryPoint);
+                const localSignature = game.files && Object.keys(game.files).length > 0
+                    ? await gameEngine.buildFileContentSignature(game.files, game.entryPoint)
+                    : (game.contentSignatureVersion === 2 && game.contentSignature
+                        ? game.contentSignature
+                        : await gameEngine.buildFileContentSignature(game.files, game.entryPoint));
                 let needsSave = false;
 
                 if (game.contentSignatureVersion !== 2 || game.contentSignature !== localSignature) {
@@ -739,7 +745,9 @@ export class UIManager {
                     }
                 } else if (usePublicCatalog) {
                     const publicGame = publicGamesById?.get(game.id);
-                    if (!publicGame?.encodedFiles || Object.keys(publicGame.encodedFiles).length === 0) {
+                    const hasPublicFileBlobs = publicGame?.files && Object.keys(publicGame.files).length > 0;
+                    const hasPublicEncodedFiles = publicGame?.encodedFiles && Object.keys(publicGame.encodedFiles).length > 0;
+                    if (!hasPublicFileBlobs && !hasPublicEncodedFiles) {
                         if (needsSave) {
                             await storage.saveGame(game);
                             mutated = true;
@@ -747,8 +755,8 @@ export class UIManager {
                         continue;
                     }
 
-                    sourceSignature = publicGame.contentSignature && publicGame.contentSignatureVersion === 2
-                        ? publicGame.contentSignature
+                    sourceSignature = publicGame.files && Object.keys(publicGame.files).length > 0
+                        ? await gameEngine.buildFileContentSignature(publicGame.files, publicGame.entryPoint || game.entryPoint)
                         : await gameEngine.buildFileContentSignatureFromEncodedFiles(publicGame.encodedFiles, publicGame.entryPoint || game.entryPoint);
                 } else {
                     if (needsSave) {
@@ -796,7 +804,15 @@ export class UIManager {
             return newlyDetected;
         } finally {
             this.gameUpdateCheckInProgress = false;
+            if (this.gameUpdateRescanRequested) {
+                this.gameUpdateRescanRequested = false;
+                return await this.scanForGameUpdates({ notify: false });
+            }
+            this.gameUpdateCheckPromise = null;
         }
+        })();
+
+        return this.gameUpdateCheckPromise;
     }
 
     getPlayableEntryPoint(game) {
@@ -3332,11 +3348,14 @@ export class UIManager {
                 overlay.classList.add('hidden');
                 overlay.classList.remove('flex');
                 syncStatus.classList.remove('text-brand-primary', 'text-white/40', 'text-red-500');
-                this.renderUpdates();
-                this.renderLibrary();
-                if (this.currentView === 'storage') {
-                    this.renderStorageManager();
-                }
+                void (async () => {
+                    await this.scanForGameUpdates({ notify: false });
+                    this.renderUpdates();
+                    this.renderLibrary();
+                    if (this.currentView === 'storage') {
+                        this.renderStorageManager();
+                    }
+                })();
             }, delayMs);
         };
 
@@ -3370,6 +3389,18 @@ export class UIManager {
                     syncStatus.textContent = 'No changes detected. Already up to date.';
                     syncStatus.classList.add('text-white/40');
                     this.notify('Already up to date', `"${game.title}" matched the current live catalog.`, 'info');
+                }
+
+                const updatedGame = syncResult.game || game;
+                if ((syncResult.changed || syncResult.upgraded) && updatedGame?.isPublic !== false) {
+                    const published = await this.publishGameToPublicLibrary(updatedGame);
+                    if (!published && this.canSyncPublicLibrary()) {
+                        this.notify(
+                            'Public sync unavailable',
+                            `"${updatedGame.title}" was updated locally, but the shared catalog could not be refreshed.`,
+                            'warning'
+                        );
+                    }
                 }
 
                 finishOverlay(syncResult.changed ? 1500 : 2500);
