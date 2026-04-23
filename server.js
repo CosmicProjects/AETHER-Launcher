@@ -101,18 +101,21 @@ const PUBLIC_LIBRARY_CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Private-Network': 'true',
     'Access-Control-Max-Age': '86400'
 };
 
 function sendJsonResponse(res, statusCode, payload) {
+    const body = JSON.stringify(payload);
     res.writeHead(statusCode, {
         'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
         'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0',
         ...PUBLIC_LIBRARY_CORS_HEADERS
     });
-    res.end(JSON.stringify(payload));
+    res.end(body);
 }
 
 /**

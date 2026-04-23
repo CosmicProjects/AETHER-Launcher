@@ -327,6 +327,16 @@ export class UIManager {
         return Boolean(this.getPublicLibrarySyncTarget());
     }
 
+    shouldShowPublicUpdateMarkers() {
+        const syncTarget = this.getPublicLibrarySyncTarget();
+
+        if (!syncTarget || env.status.isLocal) {
+            return true;
+        }
+
+        return this.publicLibrarySource === 'firebase' || this.publicLibrarySource === 'api';
+    }
+
     // Subscription & play-time tracking
     getSubscription() {
         try {
@@ -727,12 +737,15 @@ export class UIManager {
                     }
 
                     try {
-                        const response = await fetch(`${this.getLocalSyncApiUrl()}?folder=${encodeURIComponent(sourceFolder)}`, { cache: 'no-store' });
-                        const data = await this.readJsonResponse(response);
+                        const syncAttempt = await this.fetchLocalSyncGame(sourceFolder);
+                        const response = syncAttempt?.response;
+                        const data = syncAttempt?.data;
 
-                        if (!response.ok || !data?.success || !data.files) {
+                        if (!response || !response.ok || !data?.success || !data.files) {
                             if (data?.raw) {
-                                console.warn(`Unable to check updates for "${game.title}": sync endpoint returned non-JSON content.`);
+                                console.warn(`Unable to check updates for "${game.title}": sync endpoint returned non-JSON content from ${syncAttempt?.url || 'local sync server'} (${data.status || response?.status || 'no status'} ${data.contentType || response?.headers?.get?.('content-type') || 'no content-type'}).`);
+                            } else if (syncAttempt?.error) {
+                                console.warn(`Unable to check updates for "${game.title}":`, syncAttempt.error);
                             }
                             if (needsSave) {
                                 await storage.saveGame(game);
@@ -770,6 +783,23 @@ export class UIManager {
                 }
 
                 const updateAvailable = localSignature !== sourceSignature;
+                const canTrustPublicSource = this.shouldShowPublicUpdateMarkers();
+
+                if (!canTrustPublicSource) {
+                    if (game.updateAvailable || game.updateSourceSignature || game.updateDetectedAt) {
+                        game.updateAvailable = false;
+                        delete game.updateSourceSignature;
+                        delete game.updateDetectedAt;
+                        needsSave = true;
+                    }
+
+                    if (needsSave) {
+                        await storage.saveGame(game);
+                        mutated = true;
+                    }
+
+                    continue;
+                }
 
                 if (updateAvailable) {
                     if (!game.updateAvailable || game.updateSourceSignature !== sourceSignature) {
@@ -1053,12 +1083,51 @@ export class UIManager {
         return {
             success: false,
             error: 'Unexpected non-JSON response',
-            raw: trimmed
+            raw: trimmed,
+            status: response.status,
+            contentType: response.headers?.get?.('content-type') || response.headers?.get?.('Content-Type') || ''
         };
     }
 
+    getLocalSyncApiUrls() {
+        const urls = [];
+        const currentHost = typeof window !== 'undefined' ? String(window.location.hostname || '').trim() : '';
+        const loopbackHosts = ['localhost', '127.0.0.1'];
+
+        if (loopbackHosts.includes(currentHost)) {
+            urls.push(`http://${currentHost}:8080/api/sync-game`);
+            urls.push(`http://${currentHost === 'localhost' ? '127.0.0.1' : 'localhost'}:8080/api/sync-game`);
+        } else {
+            urls.push('http://localhost:8080/api/sync-game');
+            urls.push('http://127.0.0.1:8080/api/sync-game');
+        }
+
+        return [...new Set(urls)];
+    }
+
     getLocalSyncApiUrl() {
-        return 'http://127.0.0.1:8080/api/sync-game';
+        return this.getLocalSyncApiUrls()[0] || 'http://127.0.0.1:8080/api/sync-game';
+    }
+
+    async fetchLocalSyncGame(folderName) {
+        const urls = this.getLocalSyncApiUrls();
+        let lastResult = null;
+
+        for (const url of urls) {
+            try {
+                const response = await fetch(`${url}?folder=${encodeURIComponent(folderName)}`, { cache: 'no-store' });
+                const data = await this.readJsonResponse(response);
+                lastResult = { response, data, url };
+
+                if (response.ok && data?.success && data.files) {
+                    return lastResult;
+                }
+            } catch (err) {
+                lastResult = { error: err, url };
+            }
+        }
+
+        return lastResult;
     }
 
     async hydratePublicGame(rawGame) {
@@ -1434,7 +1503,7 @@ export class UIManager {
             badges.push({ label: 'Public', tone: 'accent', icon: 'globe-2' });
         }
 
-        if (game?.updateAvailable) {
+        if (game?.updateAvailable && this.shouldShowPublicUpdateMarkers()) {
             badges.push({ label: 'Update Available', tone: 'warning', icon: 'refresh-cw' });
         }
 
@@ -1720,7 +1789,10 @@ export class UIManager {
         const duplicateGroups = Array.from(duplicateIndex.values());
         const brokenCount = games.filter(game => this.isGameBroken(game)).length;
         const syncTarget = this.getPublicLibrarySyncTarget();
-        const updateGames = (env.status.isLocal || syncTarget) ? games.filter(game => game.updateAvailable) : [];
+        const showUpdateMarkers = this.shouldShowPublicUpdateMarkers();
+        const updateGames = (env.status.isLocal || syncTarget) && showUpdateMarkers
+            ? games.filter(game => game.updateAvailable)
+            : [];
         const updateSummaryCopy = env.status.isLocal
             ? `${this.formatUpdateSummary(updateGames.map(game => game.title))} Open Updates Hub to sync the updated games.`
             : `${this.formatUpdateSummary(updateGames.map(game => game.title))} Open Updates Hub to pull the newer version.`;
@@ -2334,9 +2406,9 @@ export class UIManager {
             ? 'Needs repair'
             : isPublicMirror
                 ? 'Shared'
-            : game.updateAvailable
+            : this.shouldShowPublicUpdateMarkers() && game.updateAvailable
                 ? 'Update available'
-            : game.isFavorite
+                : game.isFavorite
                 ? 'Starred'
                 : playCount > 0
                     ? 'In rotation'
@@ -3261,12 +3333,14 @@ export class UIManager {
         const headerCopy = liveCatalogMode
             ? 'Synchronize installed games with the live site catalog.'
             : 'Synchronize installed games with your local project folders.';
-        const updateStatusLabel = game => (game?.updateAvailable ? 'Update available' : 'Last Modified');
+        const showUpdateMarkers = this.shouldShowPublicUpdateMarkers();
+        const isGameUpdateAvailable = game => syncEnabled && showUpdateMarkers && Boolean(game?.updateAvailable);
+        const updateStatusLabel = game => (isGameUpdateAvailable(game) ? 'Update available' : 'Last Modified');
         
-        const updateCount = syncEnabled ? games.filter(game => game.updateAvailable).length : 0;
+        const updateCount = syncEnabled ? games.filter(isGameUpdateAvailable).length : 0;
         const sortedGames = [...games].sort((a, b) => {
             if (syncEnabled) {
-                const updateDelta = Number(Boolean(b.updateAvailable)) - Number(Boolean(a.updateAvailable));
+                const updateDelta = Number(isGameUpdateAvailable(b)) - Number(isGameUpdateAvailable(a));
                 if (updateDelta !== 0) return updateDelta;
             }
 
@@ -3313,9 +3387,9 @@ export class UIManager {
                             <div class="flex items-center gap-3">
                                 <div class="text-right mr-4">
                                      <div class="text-[10px] font-700 text-white/20 uppercase">${updateStatusLabel(game)}</div>
-                                     <div class="text-xs font-600 ${syncEnabled && game.updateAvailable ? 'text-amber-300' : 'text-white/60'}">${syncEnabled && game.updateAvailable ? 'Update available' : new Date(game.lastUpdatedAt || game.addedAt).toLocaleDateString()}</div>
-                                </div>
-                                <button class="update-game-btn px-6 py-2 ${syncEnabled ? (game.updateAvailable ? 'bg-amber-400/15 hover:bg-amber-400/25 text-amber-100 border border-amber-300/20' : 'bg-brand-primary/10 hover:bg-brand-primary text-brand-primary hover:text-white') : 'bg-white/5 text-white/30 border border-white/10 cursor-not-allowed'} rounded-xl text-xs font-700 transition-all active:scale-95" data-id="${game.id}" ${syncEnabled ? '' : 'disabled'}>
+                                      <div class="text-xs font-600 ${isGameUpdateAvailable(game) ? 'text-amber-300' : 'text-white/60'}">${isGameUpdateAvailable(game) ? 'Update available' : new Date(game.lastUpdatedAt || game.addedAt).toLocaleDateString()}</div>
+                                 </div>
+                                <button class="update-game-btn px-6 py-2 ${syncEnabled ? (isGameUpdateAvailable(game) ? 'bg-amber-400/15 hover:bg-amber-400/25 text-amber-100 border border-amber-300/20' : 'bg-brand-primary/10 hover:bg-brand-primary text-brand-primary hover:text-white') : 'bg-white/5 text-white/30 border border-white/10 cursor-not-allowed'} rounded-xl text-xs font-700 transition-all active:scale-95" data-id="${game.id}" ${syncEnabled ? '' : 'disabled'}>
                                     ${syncEnabled ? updateActionLabel : 'UNAVAILABLE'}
                                 </button>
                             </div>
@@ -3443,10 +3517,11 @@ export class UIManager {
             if (env.status.isLocal && folderName && !files) {
                 console.log(`[SYNC] Attempting automated sync for folder: ${folderName}`);
                 syncStatus.textContent = 'Loading files from the dev server...';
-                const response = await fetch(`${this.getLocalSyncApiUrl()}?folder=${encodeURIComponent(folderName)}`, { cache: 'no-store' });
-                const data = await this.readJsonResponse(response);
+                const syncAttempt = await this.fetchLocalSyncGame(folderName);
+                const response = syncAttempt?.response;
+                const data = syncAttempt?.data;
 
-                if (response.ok && data?.success && data.files) {
+                if (response?.ok && data?.success && data.files) {
                     const syncResult = await gameEngine.syncFilesFromEncodedFiles(gameId, data.files, (pct, status) => {
                         syncBar.style.width = pct + '%';
                         syncPercent.textContent = pct + '%';
@@ -3481,7 +3556,7 @@ export class UIManager {
                     finishOverlay(syncResult.changed ? 1500 : 2500);
                     return;
                 } else {
-                    console.error(`[SYNC] Automated sync failed: ${data?.error || response.statusText || 'Unknown error'}`);
+                    console.error(`[SYNC] Automated sync failed: ${data?.error || response?.statusText || syncAttempt?.error?.message || 'Unknown error'}${data?.contentType ? ` (${data.contentType})` : ''}`);
                     syncStatus.textContent = 'Folder not found on server.';
                     syncStatus.classList.add('text-red-500');
                     this.notify('Update failed', 'Folder not found on the dev server.', 'error');
