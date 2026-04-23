@@ -434,8 +434,8 @@ const server = http.createServer((req, res) => {
             const files = readDirectoryRecursive(gamePath);
             // Convert buffers to base64 for JSON transport
             const encodedFiles = {};
-            for (const [path, buffer] of Object.entries(files)) {
-                encodedFiles[path] = buffer.toString('base64');
+            for (const [relPath, buffer] of Object.entries(files)) {
+                encodedFiles[relPath] = buffer.toString('base64');
             }
 
             sendJsonResponse(res, 200, { success: true, files: encodedFiles });

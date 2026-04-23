@@ -352,7 +352,8 @@ export class GameEngine {
 
         for (let i = 0; i < total; i++) {
              let [relPath, base64] = entries[i];
-             
+             relPath = this.normalizePath(relPath);
+
              // Ensure the path matches the structure expected by the VFS
              const fullPath = relPath.startsWith(pathPrefix) ? relPath : pathPrefix + relPath;
              

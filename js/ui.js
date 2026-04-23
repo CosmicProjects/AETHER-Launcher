@@ -722,11 +722,9 @@ export class UIManager {
 
             for (const game of games) {
                 const sourceFolder = this.getGameSourceFolder(game);
-                const localSignature = game.files && Object.keys(game.files).length > 0
-                    ? await gameEngine.buildFileContentSignature(game.files, game.entryPoint)
-                    : (game.contentSignatureVersion === 2 && game.contentSignature
-                        ? game.contentSignature
-                        : await gameEngine.buildFileContentSignature(game.files, game.entryPoint));
+                const localSignature = (game.contentSignatureVersion === 2 && game.contentSignature)
+                    ? game.contentSignature
+                    : await gameEngine.buildFileContentSignature(game.files, game.entryPoint);
                 let needsSave = false;
 
                 if (game.contentSignatureVersion !== 2 || game.contentSignature !== localSignature) {
@@ -3561,7 +3559,7 @@ export class UIManager {
         const syncTarget = this.getPublicLibrarySyncTarget();
         const useLiveCatalog = !env.status.isLocal && Boolean(syncTarget);
 
-        const folderName = game.entryPoint && game.entryPoint.includes('/') ? game.entryPoint.split('/')[0] : null;
+        const folderName = this.getGameSourceFolder(game);
 
         const overlay = document.getElementById('sync-overlay');
         const syncBar = document.getElementById('sync-bar');
