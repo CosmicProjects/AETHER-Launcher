@@ -597,7 +597,7 @@ export class GameEngine {
             (match, attrs, styleBody) => `<style${attrs}>${this.rewriteCssAssetUrls(styleBody, entryPoint, blobUrls)}</style>`
         );
 
-        return rewrittenHtml;
+        return this.injectResponsiveFrameBootstrap(rewrittenHtml);
     }
 
     rewriteCssAssetUrls(cssText, entryPoint, blobUrls) {
@@ -620,6 +620,108 @@ export class GameEngine {
                 (_, prefix, quote, specifier, suffix, tail) => `${prefix}${quote}${rewrite(specifier)}${suffix}${tail}`)
             .replace(/(new\s+URL\s*\(\s*)(['"])([^'"]+)(\2)(\s*,\s*import\.meta\.url\s*\))/g,
                 (_, prefix, quote, specifier, suffix, tail) => `${prefix}${quote}${rewrite(specifier)}${suffix}${tail}`);
+    }
+
+    injectIntoHtmlHead(html, snippet) {
+        const safeSnippet = String(snippet || '').trim();
+        if (!safeSnippet) {
+            return html;
+        }
+
+        if (/<head[^>]*>/i.test(html)) {
+            return html.replace(/<head([^>]*)>/i, (match) => `${match}\n${safeSnippet}`);
+        }
+
+        if (/<html[^>]*>/i.test(html)) {
+            return html.replace(/<html([^>]*)>/i, (match) => `${match}\n<head>${safeSnippet}</head>`);
+        }
+
+        return `${safeSnippet}\n${html}`;
+    }
+
+    injectResponsiveFrameBootstrap(html) {
+        const snippets = [];
+
+        if (!/<meta\b[^>]*name=["']viewport["']/i.test(html)) {
+            snippets.push('<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">');
+        }
+
+        snippets.push(`
+<style id="aether-frame-sizing">
+html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+body {
+    min-width: 100%;
+    min-height: 100%;
+}
+#app, #root, #game, #game-root, #canvas-container, .game-root, .game-stage, canvas {
+    width: 100%;
+    height: 100%;
+}
+canvas {
+    display: block;
+}
+:where(img, video, svg) {
+    max-width: 100%;
+    max-height: 100%;
+}
+:root {
+    --aether-frame-width: 100vw;
+    --aether-frame-height: 100vh;
+}
+</style>`.trim());
+
+        snippets.push(`
+<script id="aether-frame-sizing-script">
+(() => {
+    const root = document.documentElement;
+    let scheduled = false;
+
+    const sync = () => {
+        scheduled = false;
+        const width = Math.max(1, Math.round(root.clientWidth || window.innerWidth || 0));
+        const height = Math.max(1, Math.round(root.clientHeight || window.innerHeight || 0));
+
+        root.style.setProperty('--aether-frame-width', width + 'px');
+        root.style.setProperty('--aether-frame-height', height + 'px');
+        root.dataset.aetherFrameWidth = String(width);
+        root.dataset.aetherFrameHeight = String(height);
+    };
+
+    const schedule = () => {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(sync);
+    };
+
+    window.addEventListener('resize', schedule, { passive: true });
+    window.addEventListener('orientationchange', schedule, { passive: true });
+
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', schedule, { passive: true });
+    }
+
+    if ('ResizeObserver' in window) {
+        try {
+            new ResizeObserver(schedule).observe(document.documentElement);
+        } catch (_) {}
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', sync, { once: true });
+    } else {
+        sync();
+    }
+
+    schedule();
+})();
+</script>`.trim());
+
+        return this.injectIntoHtmlHead(html, snippets.join('\n'));
     }
 }
 
