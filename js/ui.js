@@ -162,6 +162,16 @@ function decodeFirebaseKey(key) {
     }
 }
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[char]));
+}
+
 const LIBRARY_VIEWS = {
     library: {
         eyebrow: 'Collection Overview',
@@ -1680,6 +1690,115 @@ export class UIManager {
         }
     }
 
+    focusWindow(windowEntry) {
+        if (!windowEntry?.el) return;
+        windowEntry.el.style.zIndex = this.zIndices.window++;
+    }
+
+    ensureMinimizedWindowTray() {
+        if (typeof document === 'undefined') return null;
+
+        const container = document.getElementById('window-container');
+        if (!container) return null;
+
+        let tray = document.getElementById('minimized-window-tray');
+        if (!tray) {
+            tray = document.createElement('div');
+            tray.id = 'minimized-window-tray';
+            tray.className = 'fixed bottom-6 right-6 z-[60] pointer-events-none';
+            tray.hidden = true;
+            container.appendChild(tray);
+        }
+
+        return tray;
+    }
+
+    renderMinimizedWindowTray() {
+        const minimizedWindows = this.activeWindows
+            .filter(windowEntry => windowEntry?.isMinimized && windowEntry?.el?.dataset.closing !== 'true')
+            .sort((a, b) => (a.minimizedAt || 0) - (b.minimizedAt || 0));
+
+        if (minimizedWindows.length === 0) {
+            document.getElementById('minimized-window-tray')?.remove();
+            return;
+        }
+
+        const tray = this.ensureMinimizedWindowTray();
+        if (!tray) return;
+
+        tray.hidden = false;
+        tray.innerHTML = `
+            <div class="pointer-events-auto glass-panel rounded-3xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-2xl p-3 sm:p-4"
+                 style="width:min(24rem, calc(100vw - 2rem));">
+                <div class="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                        <div class="text-[10px] font-800 uppercase tracking-[0.32em] text-white/30">Minimized Games</div>
+                        <div class="text-sm font-700 text-white/70">${minimizedWindows.length} hidden</div>
+                    </div>
+                </div>
+                <div class="space-y-2">
+                    ${minimizedWindows.map(windowEntry => `
+                        <button
+                            type="button"
+                            class="w-full flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 text-left transition-all hover:bg-white/10 active:scale-[0.99]"
+                            data-game-id="${escapeHtml(windowEntry.gameId)}"
+                            aria-label="Restore ${escapeHtml(windowEntry.title || 'game')}"
+                        >
+                            <span class="w-10 h-10 rounded-xl bg-brand-primary/10 border border-brand-primary/15 flex items-center justify-center shrink-0 text-brand-primary">
+                                <i data-lucide="play" class="w-4 h-4"></i>
+                            </span>
+                            <span class="min-w-0 flex-1">
+                                <span class="block truncate text-sm font-700 text-white/90">${escapeHtml(windowEntry.title || 'Untitled Game')}</span>
+                                <span class="block text-[10px] font-800 uppercase tracking-[0.28em] text-white/25">Click to restore</span>
+                            </span>
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+
+        tray.querySelectorAll('[data-game-id]').forEach(button => {
+            button.addEventListener('click', () => {
+                this.restoreWindow(button.dataset.gameId);
+            });
+        });
+
+        lucide.createIcons();
+    }
+
+    minimizeWindow(gameId) {
+        const windowEntry = this.activeWindows.find(entry => entry.gameId === gameId);
+        if (!windowEntry || windowEntry.el?.dataset.closing === 'true' || windowEntry.isMinimized) {
+            return;
+        }
+
+        if (document.fullscreenElement && windowEntry.el.contains(document.fullscreenElement)) {
+            document.exitFullscreen().catch(() => {});
+        }
+
+        windowEntry.isMinimized = true;
+        windowEntry.minimizedAt = Date.now();
+        windowEntry.el.dataset.minimized = 'true';
+        windowEntry.el.setAttribute('aria-hidden', 'true');
+        windowEntry.el.classList.add('hidden');
+        this.renderMinimizedWindowTray();
+    }
+
+    restoreWindow(gameId) {
+        const windowEntry = this.activeWindows.find(entry => entry.gameId === gameId);
+        if (!windowEntry || windowEntry.el?.dataset.closing === 'true') {
+            return;
+        }
+
+        windowEntry.isMinimized = false;
+        delete windowEntry.minimizedAt;
+        windowEntry.el.dataset.minimized = 'false';
+        windowEntry.el.setAttribute('aria-hidden', 'false');
+        windowEntry.el.classList.remove('hidden');
+        this.focusWindow(windowEntry);
+        this.renderMinimizedWindowTray();
+    }
+
     getVisibleGames(games) {
         const viewConfig = this.getLibraryViewConfig(this.currentView);
         const searchQuery = this.searchQuery.trim().toLowerCase();
@@ -2804,6 +2923,20 @@ export class UIManager {
         const game = await this.getGameForAction(gameId);
         if (!game) return;
 
+        const existingWindow = this.activeWindows.find(windowEntry => windowEntry.gameId === gameId);
+        if (existingWindow) {
+            if (existingWindow.el?.dataset.closing === 'true') {
+                return;
+            }
+
+            if (existingWindow.isMinimized) {
+                this.restoreWindow(gameId);
+            } else {
+                this.focusWindow(existingWindow);
+            }
+            return;
+        }
+
         const currentUsername = globalThis.__AETHER_AUTH__?.user?.username;
         const isOwner = currentUsername === 'Cosmic';
         if (!isOwner) {
@@ -2835,12 +2968,6 @@ export class UIManager {
 
         // Once launched or added, treat it as a library game for state persistence
         const persistLaunchState = true;
-
-        // Check if already open
-        if (this.activeWindows.some(w => w.gameId === gameId)) {
-            // Focus it or flash it
-            return;
-        }
 
         await this.preferencesReady;
         this.showLaunchOverlay(
@@ -2874,6 +3001,7 @@ export class UIManager {
         winEl.id = windowId;
         winEl.className = 'fixed inset-0 bg-brand-bg border-0 rounded-none shadow-none overflow-hidden z-50 pointer-events-auto flex flex-col window-pop-in';
         winEl.style.zIndex = this.zIndices.window++;
+        winEl.setAttribute('aria-hidden', 'false');
 
         winEl.innerHTML = `
             <div class="window-header h-14 bg-black/40 border-b border-white/10 flex items-center justify-between px-6 select-none">
@@ -2932,6 +3060,10 @@ export class UIManager {
             this.closeWindow(gameId);
         });
 
+        winEl.querySelector('.win-minimize').addEventListener('click', () => {
+            this.minimizeWindow(gameId);
+        });
+
         const artworkBtn = winEl.querySelector('.win-artwork');
         if (artworkBtn) {
             artworkBtn.addEventListener('click', async () => {
@@ -2953,7 +3085,15 @@ export class UIManager {
             }
         });
 
-        this.activeWindows.push({ gameId, el: winEl, launchResult, isPublicMirror, launchStartedAt: Date.now() });
+        this.activeWindows.push({
+            gameId,
+            el: winEl,
+            launchResult,
+            isPublicMirror,
+            launchStartedAt: Date.now(),
+            title: game.title,
+            isMinimized: false
+        });
 
         if (persistLaunchState) {
             // Update play count
@@ -3030,6 +3170,7 @@ export class UIManager {
                 this.addWeeklyUsage(Date.now() - win.launchStartedAt);
             }
             win.el.dataset.closing = 'true';
+            this.renderMinimizedWindowTray();
             if (win.isPublicMirror) {
                 storage.getGame(gameId).then(game => {
                     if (game?._tempMirror) storage.deleteGame(gameId);
@@ -3050,6 +3191,7 @@ export class UIManager {
             const removeWindow = () => {
                 win.el.remove();
                 this.activeWindows.splice(index, 1);
+                this.renderMinimizedWindowTray();
             };
 
             if (closeDelay === 0) {
