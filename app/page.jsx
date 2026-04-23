@@ -21,13 +21,33 @@ async function readLauncherShell() {
     return stripScriptTags(bodyMatch[1]);
 }
 
+async function readSiteVersionManifest() {
+    const manifestPath = path.join(process.cwd(), 'public', 'site-version.json');
+
+    try {
+        const raw = await fs.readFile(manifestPath, 'utf8');
+        const manifest = JSON.parse(raw);
+        return manifest && typeof manifest.version === 'string' ? manifest : null;
+    } catch {
+        return null;
+    }
+}
+
+function applyBuildVersion(shell, version) {
+    return shell.replaceAll('__AETHER_BUILD_VERSION__', version);
+}
+
 export default async function HomePage() {
-    const launcherShell = await readLauncherShell();
+    const [launcherShell, siteVersionManifest] = await Promise.all([
+        readLauncherShell(),
+        readSiteVersionManifest()
+    ]);
+    const siteBuildVersion = siteVersionManifest?.version || 'local-dev';
 
     return (
         <div
             suppressHydrationWarning
-            dangerouslySetInnerHTML={{ __html: launcherShell }}
+            dangerouslySetInnerHTML={{ __html: applyBuildVersion(launcherShell, siteBuildVersion) }}
         />
     );
 }

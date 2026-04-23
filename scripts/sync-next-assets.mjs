@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { writeSiteVersionManifest } from './site-version.mjs';
 
 const rootDir = process.cwd();
 const publicDir = path.join(rootDir, 'public');
@@ -40,6 +41,7 @@ async function syncAssets() {
         }
     }
 
+    await writeSiteVersionManifest(publicDir);
     console.log(`Synced Next.js public assets into ${publicDir}`);
 }
 

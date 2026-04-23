@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { writeSiteVersionManifest } from './site-version.mjs';
 
 const rootDir = process.cwd();
 const outDir = path.join(rootDir, 'site');
@@ -17,11 +18,9 @@ const copyTargets = [
 async function build() {
     console.log('🏗️ Starting static site build...');
 
-    // Clean and create outDir
     await fs.rm(outDir, { recursive: true, force: true });
     await fs.mkdir(outDir, { recursive: true });
 
-    // Copy assets
     for (const target of copyTargets) {
         const sourcePath = path.join(rootDir, target);
         const destinationPath = path.join(outDir, target);
@@ -38,6 +37,19 @@ async function build() {
             if (err?.code !== 'ENOENT') {
                 console.error(`Error copying ${target}:`, err);
             }
+        }
+    }
+
+    const manifest = await writeSiteVersionManifest(outDir);
+    const indexPath = path.join(outDir, 'index.html');
+
+    try {
+        const indexHtml = await fs.readFile(indexPath, 'utf8');
+        const versionedHtml = indexHtml.replaceAll('__AETHER_BUILD_VERSION__', manifest.version);
+        await fs.writeFile(indexPath, versionedHtml, 'utf8');
+    } catch (err) {
+        if (err?.code !== 'ENOENT') {
+            console.error('Error stamping build version into index.html:', err);
         }
     }
 

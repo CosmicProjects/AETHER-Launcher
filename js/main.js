@@ -8,6 +8,7 @@
 import { storage } from './storage.js';
 import { ui } from './ui.js';
 import { auth } from './auth.js';
+import { siteUpdates } from './site-updates.js';
 
 async function initAether() {
     console.log('🚀 AETHER Launcher: Initializing Engine...');
@@ -26,6 +27,14 @@ async function initAether() {
             console.error('CRITICAL: AETHER Filesystem Registration Failed:', error);
         }
     }
+
+    const appRoot = document.getElementById('app');
+    const siteBuildVersion = appRoot?.dataset.siteBuild?.trim();
+    if (siteBuildVersion) {
+        window.__AETHER_SITE_BUILD__ = siteBuildVersion;
+    }
+
+    void siteUpdates.start();
 
     await auth.ready;
 

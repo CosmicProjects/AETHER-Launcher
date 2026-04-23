@@ -80,6 +80,22 @@ async function readFileLauncherConfig() {
     }
 }
 
+async function readSiteVersionManifest() {
+    const manifestPath = path.join(process.cwd(), 'public', 'site-version.json');
+
+    try {
+        const raw = await fs.readFile(manifestPath, 'utf8');
+        const manifest = JSON.parse(raw);
+        return manifest && typeof manifest.version === 'string' ? manifest : null;
+    } catch {
+        return null;
+    }
+}
+
+function versionedAssetUrl(assetPath, version) {
+    return version ? `${assetPath}?v=${encodeURIComponent(version)}` : assetPath;
+}
+
 async function buildLauncherConfig() {
     const fileConfig = await readFileLauncherConfig();
     const envPublicLibraryReadUrl = readEnvFirst('NEXT_PUBLIC_PUBLIC_LIBRARY_READ_URL', 'PUBLIC_LIBRARY_READ_URL').replace(/\/$/, '');
@@ -97,7 +113,11 @@ async function buildLauncherConfig() {
 }
 
 export default async function RootLayout({ children }) {
-    const config = await buildLauncherConfig();
+    const [config, siteVersionManifest] = await Promise.all([
+        buildLauncherConfig(),
+        readSiteVersionManifest()
+    ]);
+    const siteBuildVersion = siteVersionManifest?.version || 'local-dev';
 
     return (
         <html lang="en">
@@ -106,10 +126,10 @@ export default async function RootLayout({ children }) {
                 <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
                 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
                 <link href="https://fonts.googleapis.com/css2?family=Teko:wght@500;600;700&display=swap" rel="stylesheet" />
-                <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2" />
-                <link rel="icon" type="image/svg+xml" sizes="any" href="favicon.svg?v=2" />
-                <link rel="shortcut icon" href="favicon-32.png?v=2" />
-                <link rel="stylesheet" href="styles.css" />
+                <link rel="icon" type="image/png" sizes="32x32" href={versionedAssetUrl('favicon-32.png', siteBuildVersion)} />
+                <link rel="icon" type="image/svg+xml" sizes="any" href={versionedAssetUrl('favicon.svg', siteBuildVersion)} />
+                <link rel="shortcut icon" href={versionedAssetUrl('favicon-32.png', siteBuildVersion)} />
+                <link rel="stylesheet" href={versionedAssetUrl('styles.css', siteBuildVersion)} />
                 <script src="https://cdn.tailwindcss.com"></script>
                 <script
                     dangerouslySetInnerHTML={{
