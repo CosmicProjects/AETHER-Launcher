@@ -2872,7 +2872,7 @@ export class UIManager {
         const windowId = `win-${gameId}`;
         winEl = document.createElement('div');
         winEl.id = windowId;
-        winEl.className = 'fixed inset-4 bg-brand-bg rounded-2xl border border-white/10 shadow-2xl overflow-hidden glass-panel z-50 pointer-events-auto flex flex-col window-pop-in';
+        winEl.className = 'fixed inset-0 bg-brand-bg border-0 rounded-none shadow-none overflow-hidden z-50 pointer-events-auto flex flex-col window-pop-in';
         winEl.style.zIndex = this.zIndices.window++;
 
         winEl.innerHTML = `
@@ -2889,7 +2889,7 @@ export class UIManager {
                     <button class="win-btn win-close window-control window-control-close"><i data-lucide="x" class="w-4 h-4"></i></button>
                 </div>
             </div>
-            <div class="flex-1 bg-black relative">
+            <div class="flex-1 min-h-0 bg-black relative">
                 <iframe src="about:blank" class="w-full h-full border-none" sandbox="allow-scripts allow-forms allow-pointer-lock allow-same-origin"></iframe>
                 <div class="loader game-window-loader absolute inset-0 flex items-center justify-center pointer-events-none">
                     <div class="w-12 h-12 border-4 border-brand-primary/20 border-t-brand-primary rounded-full animate-spin"></div>
