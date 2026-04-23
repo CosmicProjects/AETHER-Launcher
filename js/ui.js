@@ -3210,7 +3210,7 @@ export class UIManager {
         if (badge) {
             badge.innerHTML = `
                 <span class="w-2 h-2 rounded-full bg-brand-primary animate-pulse"></span>
-                ${env.status.env} • ${env.status.platform}
+                <span class="whitespace-nowrap">${env.status.env} &bull; ${env.status.platform}</span>
             `;
         }
     }
